@@ -1,0 +1,22 @@
+# Ignore the secrets file
+Backup.conf
+
+# Ignore all log files
+*.log
+*.sha256
+
+# Ignore temporary files
+/tmp/*
+expected_hash.txt
+
+# Ignore archive directory
+archive/
+
+# Ignore backups directory
+backups/
+
+# Ignore log directory
+log/
+
+# Ignore the development script
+Backup_dev.sh

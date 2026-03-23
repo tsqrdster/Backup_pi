@@ -1,0 +1,49 @@
+##############################
+#
+#  Backup_pi .conf file
+# 
+#    Set desired options and
+#    rename to Backup.conf
+#
+##############################
+# --- Backup Type ---
+# Type can be - "image" / "image incremental" / "user" / "user compressed"
+BACKUP_TYPE="image"
+
+# --- System Specifics ---
+BACKUP_ROOT="/media/usb1/Backups"
+MARKER_FILE="/media/usb1/Backups/.USB_IS_HERE"
+LOG_TO_FILE=1
+LOG_TO_FILE_DIRECTORY="/media/usb1/Backups/Backup_pi/log"
+
+# --- Services and Docker containers to stop & re-start
+STOP_SERVICES=1
+# A space-separated list of Services
+SERVICES_RUNNING="smbd docker.socket docker tailscaled"
+STOP_CONTAINERS=1
+# A space-separated list of container names or IDs
+DOCKER_CONTAINERS="netdata pihole dnscrypt-proxy portainer"
+
+# --- Messaging options ---
+SEND_TELEGRAM_MESSAGES=1
+SEND_GOTIFY_MESSAGES=0
+SEND_NTFY_MESSAGES=0
+SEND_NTFY_TOPIC="<Set Ntfy topic>"
+SEND_MESSAGES_ONLY_ON_ERROR=0
+SEND_CONFIRMATON_MESSAGE_ONLY=0
+SEND_LOG_MESSAGES=1
+
+# --- Limits & Retention ---
+BACKUP_ANTAL=7
+USER_BACKUP_ANTAL=3
+LOG_ANTAL=30
+
+# --- Backup "image-backup" & (-o rsync) options ---
+IMAGE_BACKUP_OPTIONS="-n -o --info=progress2,--stats"
+IMAGE_BACKUP_INITIAL_IMAGE_SIZE=
+IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS=5000   # 5 GB (or so)
+
+# --- Post Image creation options ---
+VERIFY_IMAGE=1
+PISHRINK_IMAGE=0
+PISHRINK_AND_GZIP_IMAGE=0
