@@ -469,7 +469,7 @@ if [[ "$LOG_TO_FILE" == "1" ]]; then
 fi
 
 # Check for necessary commands and when found read full path of command into a variable like $RSYNC_BIN (? in front of optional commands)
-check_commands rsync fstrim image-backup image-info ?pishrink.sh ?telegram-send ?telegram-send-group-topic.sh ?telegram-send-group-topic-file.sh ?gotify-send.sh ?ntfy-send.sh ?ntfy-send-file.sh
+check_commands rsync fstrim image-backup image-info "?pishrink.sh" "?telegram-send" "?telegram-send-group-topic.sh" "?telegram-send-group-topic-file.sh" "?gotify-send.sh" "?ntfy-send.sh" "?ntfy-send-file.sh"
 # NOT STRICTLY NECESSARY IF NOT USED - pishrink.sh telegram-send-group-topic.sh telegram-send-group-topic-file.sh gotify-send.sh ntfy-send.sh ntfy-send-file.sh
 # echo "$RSYNC_BIN"
 # echo "$FSTRIM_BIN"
@@ -951,7 +951,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
 
             echo "Starting image-backup image creation..." | do_log
 
-            echo "Starting image-backup with command : $IMAGE_BACKUP_BIN ${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[@]} -i $FULL_PATH" | do_log
+            echo "Starting image-backup with command : $IMAGE_BACKUP_BIN ${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[*]} -i $FULL_PATH" | do_log
             # 1. Start the stopwatch
             START_TIME=$SECONDS
             $IMAGE_BACKUP_BIN "${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
@@ -1081,7 +1081,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
 
             echo "Starting image-backup image creation..." | do_log
 
-            echo "Starting image-backup with command : $IMAGE_BACKUP_BIN ${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[@]} -i $FULL_PATH" | do_log
+            echo "Starting image-backup with command : $IMAGE_BACKUP_BIN ${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[*]} -i $FULL_PATH" | do_log
             # 1. Start the stopwatch
             START_TIME=$SECONDS
             $IMAGE_BACKUP_BIN "${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
@@ -1393,7 +1393,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
             # Start stopwatch
             START_TIME=$SECONDS
             # Perform incremental backup
-            $IMAGE_BACKUP_BINp "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" "$FULL_PATH" | do_log
+            $IMAGE_BACKUP_BIN "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" "$FULL_PATH" | do_log
             IMAGE_BACKUP_RESULT=$?
         else # Logging and progress requested - skip logging output or the log file is huge
             if [[ "$LOG_TO_FILE" == "1" ]]; then

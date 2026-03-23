@@ -69,11 +69,14 @@ Edit your .conf file (ensure it is in the same directory) to set your backup pat
 	```bash
 	cp Backup.conf.example Backup.conf
 	nano Backup.conf
-	# (make changes in regard to your backup location and options then save with  <ctrl>+o  then exit  with  <ctrl>+x )
+	# (make changes in regard to your backup location and options then save with  <ctrl>+o <enter> then exit  with  <ctrl>+x )
 	
+	# Make executable
 	chmod +x Backup.sh
-	sudo ln -s /usr/local/bin/Backup.sh /user/pi/Installs/Backup_pi/Backup.sh
-	
+	# Create link to file in /usr/local/bin/
+	# (replace "/home/pi/"  with correct user home location)
+	sudo ln -s /home/pi/Installs/Backup_pi/Backup.sh /usr/local/bin/Backup.sh
+		
 	# Create a .USB_IS_HERE file in root of your configured backup directory
 	# Replace "/mnt/backup" with your backup location
 	touch /mnt/backup/.USB_IS_HERE	
