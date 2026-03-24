@@ -300,8 +300,8 @@ rotate_backups_and_logs() {
     # 1. Get the list of all matches, sorted alphabetically (Oldest at top)
     local ALL_BACKUPS
     # shellcheck disable=SC2012
-    ALL_BACKUPS=$(ls -1d "${PATTERN}" 2>/dev/null | sort)
-    
+    ALL_BACKUPS=$(ls -1d "${PATTERN}"* 2>/dev/null | sort)
+
     # 2. Count them (ignoring empty results)
     local TOTAL_FILES
     TOTAL_FILES=$(echo "$ALL_BACKUPS" | grep -vc '^$')
@@ -682,7 +682,7 @@ if [[ "$BACKUP_MODE" == "USER" ]]; then
                 exit 1
             fi
             # Set pattern to search for when purging backups
-            BACKUP_PATTERN="user_backup_${REAL_USER}_*"
+            BACKUP_PATTERN="user_backup_${REAL_USER}_"
             pushd "${BACKUP_PATH}" >/dev/null || echo "Warning: Could not save current directory" | do_log
             if ((USER_BACKUP_ANTAL > 0)); then
                 # # # 1. Identify files to delete (filtering out full system images)
@@ -693,7 +693,7 @@ if [[ "$BACKUP_MODE" == "USER" ]]; then
             fi
 
             # Set pattern to search for when purging log files
-            LOG_PATTERN="user_backup_${REAL_USER}_*.tar.gz.log"
+            LOG_PATTERN="user_backup_${REAL_USER}_"
         else
             # --- OPTION B: Straight Copy (Structure Only) ---
             # We use rsync to keep permissions, links, and times intact
@@ -723,7 +723,7 @@ if [[ "$BACKUP_MODE" == "USER" ]]; then
             # ♻️ Purge Status: $PURGE_RESULT"
 
             # Set pattern to search for when purging backups
-            BACKUP_PATTERN="user_files_${REAL_USER}_*"
+            BACKUP_PATTERN="user_files_${REAL_USER}_"
             pushd "${BACKUP_PATH}" >/dev/null || echo "Warning: Could not save current directory" | do_log
             if ((USER_BACKUP_ANTAL > 0)); then
                 # # 1. Identify dirs (-d) to delete (filtering out full system images)
@@ -734,7 +734,7 @@ if [[ "$BACKUP_MODE" == "USER" ]]; then
                 echo "Warning: USER_BACKUP_ANTAL is 0. Skipping purge to prevent total data loss." | do_log
             fi
             # Set pattern to search for when purging log files
-            LOG_PATTERN="user_files_${REAL_USER}_*.log"
+            LOG_PATTERN="user_files_${REAL_USER}_"
         fi
 
         # Purge Logs if selected
@@ -1236,7 +1236,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
         echo "Keeping only the latest $BACKUP_ANTAL backups..." | do_log
 
         # For System Images (if you want)
-        rotate_backups_and_logs "${BACKUP_PATH}/${HOSTNAME}-${OS_NAME}-${ARCHITECTURE}*" "$BACKUP_ANTAL" "System Images"
+        rotate_backups_and_logs "${BACKUP_PATH}/${HOSTNAME}-${OS_NAME}-${ARCHITECTURE}" "$BACKUP_ANTAL" "System Images"
 
         echo "" | do_log
     else
@@ -1245,6 +1245,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
     # Purge Logs if selected
     # Purge old logs if number of logs to keep is greater than 0
     if ((LOG_ANTAL > 0)); then
+        LOG_PATTERN="Backup_pi-${HOSTNAME}-${OS_NAME}-${ARCHITECTURE}"
         # Ensure the directory exists before we try to enter it
         if [[ -d $LOG_TO_FILE_DIRECTORY ]]; then
             pushd "${LOG_TO_FILE_DIRECTORY}" >/dev/null || echo "Warning: Could not save current directory" | do_log
