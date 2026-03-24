@@ -1213,10 +1213,14 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
         echo "" | do_log
 
         # Set arguments for pishrink according to setting selected
-        PISHRINK_ARGS="-s" # Do not Autoexpand when image is used and first booted
-        [[ "$PISHRINK_AND_GZIP_IMAGE" == "1" ]] && PISHRINK_ARGS="$PISHRINK_ARGS -z" # ADD gzip option
+        # 1. Initialize as an array with the first argument
+        PISHRINK_ARGS=("-s")
+
+        # 2. Append the -z option if needed using +=
+        [[ "$PISHRINK_AND_GZIP_IMAGE" == "1" ]] && PISHRINK_ARGS+=("-z")
+
         # Perform PiShrink
-        "$PISHRINK_BIN" $PISHRINK_ARGS "$FULL_PATH" | do_log
+        "$PISHRINK_BIN" "${PISHRINK_ARGS[@]}" "$FULL_PATH" | do_log
         # show image-info after PiShrink if it was not gzipped
         if [[ "$PISHRINK_AND_GZIP_IMAGE" != "1" ]]; then
             "$IMAGE_INFO_BIN" "$FULL_PATH" | do_log
