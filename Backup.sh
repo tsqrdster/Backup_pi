@@ -299,11 +299,12 @@ rotate_backups_and_logs() {
 
     # 1. Get the list of all matches, sorted alphabetically (Oldest at top)
     local ALL_BACKUPS
+    # shellcheck disable=SC2012
     ALL_BACKUPS=$(ls -1d "${PATTERN}" 2>/dev/null | sort)
     
     # 2. Count them (ignoring empty results)
     local TOTAL_FILES
-    TOTAL_FILES=$(echo "$ALL_BACKUPS" | grep -v '^$' | wc -l)
+    TOTAL_FILES=$(echo "$ALL_BACKUPS" | grep -vc '^$')
 
     if (( TOTAL_FILES > LIMIT )); then
         local NUM_TO_DELETE=$(( TOTAL_FILES - LIMIT ))
@@ -328,7 +329,7 @@ CONFIG_FILE="$SCRIPT_DIR/Backup.conf"
 # Check if the config file exists before trying to load it
 if [[ -f "$CONFIG_FILE" ]]; then
     # The dot (.) is the command for 'source'
-    # shellcheck source=./Backup.conf
+    # shellcheck source=/dev/null
     . "$CONFIG_FILE"
 else
     echo "ERROR: Configuration file $CONFIG_FILE not found!" | do_log
@@ -387,6 +388,7 @@ ARCHITECTURE="${BITS}bits"
 
 # Detect OS Codename (fallback if necessary)
 if [ -f /etc/os-release ]; then
+    # shellcheck source=/dev/null
     . /etc/os-release
     OS_NAME=$VERSION_CODENAME
     # Fallback for older versions that don't use VERSION_CODENAME
@@ -503,18 +505,22 @@ echo ""
 if [[ "$LOG_TO_FILE" == "1" ]]; then
     log_directory_check
     if [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
-        echo "---------------------------------------------------" >>"$FULL_LOG_PATH"
-        echo "----------------INCREMENTAL UPDATE-----------------" >>"$FULL_LOG_PATH"
-        echo "---------------------------------------------------" >>"$FULL_LOG_PATH"
+        {
+            echo "---------------------------------------------------"
+            echo "----------------INCREMENTAL UPDATE-----------------"
+            echo "---------------------------------------------------"
+        } >>"$FULL_LOG_PATH"
     else
         echo "---------------------------------------------------" >"$FULL_LOG_PATH"
     fi
-    echo "Backup started at: $(date)" >>"$FULL_LOG_PATH"
-    echo "System Detected: $OS_NAME ($ARCHITECTURE)" >>"$FULL_LOG_PATH"
-    echo "Device to back up: $SOURCE_DEV" >>"$FULL_LOG_PATH"
-    echo "Type: $START_MSG" >>"$FULL_LOG_PATH"
-    echo "Log file: ""$LOG_TO_FILE_DIRECTORY"/"$LOG_TO_FILE_FILENAME""" >>"$FULL_LOG_PATH"
-    echo "" >>"$FULL_LOG_PATH"
+    {
+        echo "Backup started at: $(date)"
+        echo "System Detected: $OS_NAME ($ARCHITECTURE)"
+        echo "Device to back up: $SOURCE_DEV"
+        echo "Type: $START_MSG"
+        echo "Log file: ""$LOG_TO_FILE_DIRECTORY"/"$LOG_TO_FILE_FILENAME"""
+        echo "" 
+    } >>"$FULL_LOG_PATH"
 fi
 
 # Send start message if set to send messages and not restricted to some messages only
@@ -1327,7 +1333,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
         / /tmp/empty/ | awk '/Total file size/ { gsub(/,/, "", $4); print int($4 / 1024) }')
     # use image-info on backup image to get space and size information
     # shellcheck disable=SC2034
-    read -r root_1k root_used root_avail root_pct_use <<<$("$IMAGE_INFO_BIN" "$FULL_PATH" | awk '$1=="root" {print $3, $4, $5, $6}')
+    read -r root_1k root_used root_avail root_pct_use <<< "$("$IMAGE_INFO_BIN" "$FULL_PATH" | awk '$1=="root" {print $3, $4, $5, $6}')"
     echo "Image file Root total 1k Blocks available (all space): $root_1k" | do_log
     echo "Total 1K blocks needed for image-backup: $RSYNC_TOTAL_1K_BLOCKS_NEEDED" | do_log
     # Calculate BLOCKS_NEEDED plus 5%
