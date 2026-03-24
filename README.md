@@ -1,3 +1,4 @@
+![ShellCheck Status](https://github.com/tsqrdster/Backup_pi)
 # 🖥️ Backup_pi 🚀
 
 A professional, automated backup solution for Raspberry Pi. This script creates incremental, shrunk, and verified system images while keeping you updated via Telegram, Gotify or Ntfy.
