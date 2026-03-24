@@ -106,22 +106,22 @@ send_messages() {
     if [[ "$SEND_TELEGRAM_MESSAGES" == "1" && ( -n "$TELEGRAM_SEND_GROUP_TOPIC_BIN" || -n "$TELEGRAM_SEND_BIN" ) ]]; then
         if [[ -n "$TELEGRAM_SEND_GROUP_TOPIC_BIN" ]]; then
             # Use "5" as your default topic ID since it's hardcoded in your example
-            $TELEGRAM_SEND_GROUP_TOPIC_BIN "$MSG" "5" | do_log
+            "$TELEGRAM_SEND_GROUP_TOPIC_BIN" "$MSG" "5" | do_log
         else
-            $TELEGRAM_SEND_BIN "$MSG" | do_log
+            "$TELEGRAM_SEND_BIN" "$MSG" | do_log
         fi
     fi
 
     # 2. Gotify Logic
     if [[ "$SEND_GOTIFY_MESSAGES" == "1" && -n "$GOTIFY_SEND_BIN" ]]; then
         # Uses your sourced title and priority variables
-        $GOTIFY_SEND_BIN "$GOTIFY_MESSAGE_TITLE" "$MSG" "$GOTIFY_MESSAGE_PRIORITY" | do_log
+        "$GOTIFY_SEND_BIN" "$GOTIFY_MESSAGE_TITLE" "$MSG" "$GOTIFY_MESSAGE_PRIORITY" | do_log
     fi
 
     # 2. Ntfy Logic
     if [[ "$SEND_NTFY_MESSAGES" == "1" && -n "$NTFY_SEND_BIN" ]]; then
         # Uses your sourced title and priority variables
-        $NTFY_SEND_BIN "$MSG" "$SEND_NTFY_TOPIC" | do_log
+        "$NTFY_SEND_BIN" "$MSG" "$SEND_NTFY_TOPIC" | do_log
     fi
 }
 
@@ -136,9 +136,9 @@ send_log_messages() {
     # 2. Telegram: Send the actual FILE
     if [[ "$SEND_TELEGRAM_MESSAGES" == "1" && ( -n "$TELEGRAM_SEND_GROUP_TOPIC_FILE_BIN" || -n "$TELEGRAM_SEND_BIN" ) ]]; then
         if [[ -n "$TELEGRAM_SEND_GROUP_TOPIC_FILE_BIN" ]]; then
-            $TELEGRAM_SEND_GROUP_TOPIC_FILE_BIN "$TITLE" "5" "$FULL_LOG_PATH" | do_log
+            "$TELEGRAM_SEND_GROUP_TOPIC_FILE_BIN" "$TITLE" "5" "$FULL_LOG_PATH" | do_log
         else
-            $TELEGRAM_SEND_BIN --file "$FULL_LOG_PATH" --caption "$TITLE"
+            "$TELEGRAM_SEND_BIN" --file "$FULL_LOG_PATH" --caption "$TITLE"
         fi
     fi
 
@@ -159,12 +159,12 @@ send_log_messages() {
             # SNIPPET=$(printf -- "--- FIRST 100 LINES ---\n%s\n\n--- [... SNIP ...] ---\n\n--- LAST 100 LINES ---\n%s" "$START_LOG" "$END_LOG")
             GOTIFY_MSG=$(printf -- "--- FIRST 100 LINES ---\n%s\n\n--- [... SNIP ...] ---\n\n--- LAST 100 LINES ---\n%s" "$START_LOG" "$END_LOG")
         fi
-        $GOTIFY_SEND_BIN "$GOTIFY_MESSAGE_TITLE" "$GOTIFY_MSG" "$GOTIFY_MESSAGE_PRIORITY" | do_log
+        "$GOTIFY_SEND_BIN" "$GOTIFY_MESSAGE_TITLE" "$GOTIFY_MSG" "$GOTIFY_MESSAGE_PRIORITY" | do_log
     fi
 
     # 4. Nfty: Send the actual FILE
     if [[ "$SEND_NTFY_MESSAGES" == "1" && -n "$NTFY_SEND_FILE_BIN" ]]; then
-        $NTFY_SEND_FILE_BIN "$TITLE" "$SEND_NTFY_TOPIC" "$FULL_LOG_PATH" | do_log
+        "$NTFY_SEND_FILE_BIN" "$TITLE" "$SEND_NTFY_TOPIC" "$FULL_LOG_PATH" | do_log
     fi
 }
 
@@ -214,15 +214,14 @@ startServices() {
     echo "Starting the stopped services and Docker containers..." | do_log
     echo | do_log
     # 1. Convert the strings into a temporary array
+    # shellcheck disable=SC2206
     services=($SERVICES_RUNNING)
-
+    # shellcheck disable=SC2206
     containers=($DOCKER_CONTAINERS)
-
     if [[ "$STOP_SERVICES" == "1" ]]; then
         # Check if the variable is NOT blank before starting
         if [[ -n "$SERVICES_RUNNING" ]]; then
             echo "Re-starting Services: $SERVICES_RUNNING" | do_log
-
             # 2. Loop through the array indices in reverse
             # Starting at (total length - 1) down to 0
             for ((i = ${#services[@]} - 1; i >= 0; i--)); do
@@ -300,7 +299,7 @@ rotate_backups_and_logs() {
 
     # 1. Get the list of all matches, sorted alphabetically (Oldest at top)
     local ALL_BACKUPS
-    ALL_BACKUPS=$(ls -1d ${PATTERN} 2>/dev/null | sort)
+    ALL_BACKUPS=$(ls -1d "${PATTERN}" 2>/dev/null | sort)
     
     # 2. Count them (ignoring empty results)
     local TOTAL_FILES
@@ -557,28 +556,25 @@ if [[ "$BACKUP_MODE" != "USER" ]]; then
 
         if [[ -n "$CURRENT_MOUNT" ]]; then
             # Partition is already mounted (e.g., to /boot/firmware)
-            stdbuf -oL $FSTRIM_BIN -v "$CURRENT_MOUNT" 2>&1 | do_log
-            stdbuf -oL $FSTRIM_BIN -v / 2>&1 | do_log
+            stdbuf -oL "$FSTRIM_BIN" -v "$CURRENT_MOUNT" 2>&1 | do_log
+            stdbuf -oL "$FSTRIM_BIN" -v / 2>&1 | do_log
         elif [[ -b "$BOOT_PART" ]]; then
             # Partition needs temporary mounting
             mkdir -p "$TEMP_MOUNT"
             echo "Boot partition not mounted. Mounting temporarily..." | do_log
             echo "" | do_log
             if mount "$BOOT_PART" "$TEMP_MOUNT"; then
-                stdbuf -oL $FSTRIM_BIN -v "$TEMP_MOUNT" 2>&1 | do_log
+                stdbuf -oL "$FSTRIM_BIN" -v "$TEMP_MOUNT" 2>&1 | do_log
                 sleep 1
                 umount "$TEMP_MOUNT"
             fi
             # Always trim root last
-            stdbuf -oL $FSTRIM_BIN -v / 2>&1 | do_log
+            stdbuf -oL "$FSTRIM_BIN" -v / 2>&1 | do_log
         else
             echo "Warning: Could not identify a VFAT boot partition. Trimming root only." | do_log
-            stdbuf -oL $FSTRIM_BIN -v / 2>&1 | do_log
+            stdbuf -oL "$FSTRIM_BIN" -v / 2>&1 | do_log
         fi
-        echo ""
-        if [[ "$LOG_TO_FILE" == "1" ]]; then
-            echo "" >>"$FULL_LOG_PATH"
-        fi
+        echo "" | do_log
     fi
 fi
 
@@ -701,7 +697,7 @@ if [[ "$BACKUP_MODE" == "USER" ]]; then
 
             # -a: archive mode (preserves everything)
             # -v: verbose (so do_log catches the file list)
-            $RSYNC_BIN -av "$USER_DIR/" "$DEST_DIR/" 2>&1 | do_log
+            "$RSYNC_BIN" -av "$USER_DIR/" "$DEST_DIR/" 2>&1 | do_log
             FINAL_SIZE=$(du -sh "$DEST_DIR" | awk '{print $1}')
             echo "" | do_log
             echo "Backup Successful for $HOSTNAME from: $USER_DIR/ to: $DEST_DIR (Size: $FINAL_SIZE)" | do_log
@@ -797,7 +793,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
         # echo "Detected last partition ends at sector $LAST_SECTOR. Optimized count: $AUTO_COUNT" | do_log
 
         echo "Calculated Count: $AUTO_COUNT (1MB blocks)" | do_log
-
+        # shellcheck disable=SC2034
         TOTAL_SECTORS=$((LAST_SECTOR + 32768))
 
         echo "Last Sector: $LAST_SECTOR | Copying up to: $AUTO_COUNT" | do_log
@@ -877,7 +873,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
             if [[ "$IMAGE_BACKUP_LOG_PROGRESS" == "1" ]]; then
                 # 1. Start the stopwatch
                 START_TIME=$SECONDS
-                $IMAGE_BACKUP_BIN "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
+                "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
                 IMAGE_BACKUP_RESULT=$?
             else # Logging and progress requested - skip logging output or the log file is huge
                 if [[ "$LOG_TO_FILE" == "1" ]]; then
@@ -885,7 +881,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
                 fi
                 # 1. Start the stopwatch
                 START_TIME=$SECONDS
-                $IMAGE_BACKUP_BIN "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS"
+                "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS"
                 IMAGE_BACKUP_RESULT=$?
             fi
 
@@ -954,7 +950,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
             echo "Starting image-backup with command : $IMAGE_BACKUP_BIN ${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[*]} -i $FULL_PATH" | do_log
             # 1. Start the stopwatch
             START_TIME=$SECONDS
-            $IMAGE_BACKUP_BIN "${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
+            "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
             # Capture the exit status into a variable immediately
             IMAGE_BACKUP_RESULT=$?
             # 3. Capture End Stats - Stop the Stopwatch
@@ -1006,7 +1002,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
             if [[ "$IMAGE_BACKUP_LOG_PROGRESS" == "1" ]]; then
                 # 1. Start the stopwatch
                 START_TIME=$SECONDS
-                $IMAGE_BACKUP_BIN "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
+                "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
                 IMAGE_BACKUP_RESULT=$?
             else # Logging and progress requested - skip logging output or the log file is huge
                 if [[ "$LOG_TO_FILE" == "1" ]]; then
@@ -1014,7 +1010,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
                 fi
                 # 1. Start the stopwatch
                 START_TIME=$SECONDS
-                $IMAGE_BACKUP_BIN "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS"
+                "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS"
                 IMAGE_BACKUP_RESULT=$?
             fi
 
@@ -1084,7 +1080,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
             echo "Starting image-backup with command : $IMAGE_BACKUP_BIN ${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[*]} -i $FULL_PATH" | do_log
             # 1. Start the stopwatch
             START_TIME=$SECONDS
-            $IMAGE_BACKUP_BIN "${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
+            "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
             # Capture the exit status into a variable immediately
             IMAGE_BACKUP_RESULT=$?
             # 3. Capture End Stats - Stop the Stopwatch
@@ -1137,7 +1133,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
             echo | do_log
             echo "Image creation using image-backup finished. Results from image-info:" | do_log
             # use image-info to display .img file info
-            $IMAGE_INFO_BIN "$FULL_PATH" | do_log
+            "$IMAGE_INFO_BIN" "$FULL_PATH" | do_log
         fi
 
         echo "" | do_log
@@ -1156,8 +1152,8 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
         # 1. Split the path into directory and filename
         BACKUP_DIR=$(dirname "$IMAGE")
         FILE_NAME=$(basename "$IMAGE")
+        # shellcheck disable=SC2034
         HASH_FILE_NAME="${FILE_NAME}.sha256"
-
         # 2. Save current location and move to the USB directory
         if pushd "$BACKUP_DIR" >/dev/null; then
             # TEST: Try to create a tiny dummy file
@@ -1214,10 +1210,10 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
         PISHRINK_ARGS="-s" # Do not Autoexpand when image is used and first booted
         [[ "$PISHRINK_AND_GZIP_IMAGE" == "1" ]] && PISHRINK_ARGS="$PISHRINK_ARGS -z" # ADD gzip option
         # Perform PiShrink
-        $PISHRINK_BIN $PISHRINK_ARGS "$FULL_PATH" | do_log
+        "$PISHRINK_BIN" $PISHRINK_ARGS "$FULL_PATH" | do_log
         # show image-info after PiShrink if it was not gzipped
         if [[ "$PISHRINK_AND_GZIP_IMAGE" != "1" ]]; then
-            $IMAGE_INFO_BIN "$FULL_PATH" | do_log
+            "$IMAGE_INFO_BIN" "$FULL_PATH" | do_log
         else
             FULL_PATH="$FULL_PATH.gz"
         fi
@@ -1320,18 +1316,18 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
     # create an empty folder to get all possibe files transferred and size
     mkdir -p /tmp/empty >>/dev/null
     echo "Calculating rsync space needed..." | do_log
-
     # Calculate full backup size using
     # rsync command from image-backup:
     # rsync -aDH --dry-run --itemize-changes --partial --numeric-ids --delete --force --exclude "${MNTPATH}" --exclude '/dev' \
     # --exclude '/lost+found' --exclude '/media' --exclude '/mnt' --exclude '/proc' --exclude '/run' --exclude '/sys' --exclude '/tmp' --exclude '/var/swap' \
     # --exclude '/etc/udev/rules.d/70-persistent-net.rules' --exclude '/var/lib/asterisk/astdb.sqlite3-journal' "${OPTIONS[@]}" / "${MNTPATH}/")"
-    RSYNC_TOTAL_1K_BLOCKS_NEEDED=$($RSYNC_BIN -aDHn --stats --exclude "/tmp/empty/" --exclude '/dev' --exclude '/lost+found' --exclude '/media' \
+    RSYNC_TOTAL_1K_BLOCKS_NEEDED=$("$RSYNC_BIN" -aDHn --stats --exclude "/tmp/empty/" --exclude '/dev' --exclude '/lost+found' --exclude '/media' \
         --exclude '/mnt' --exclude '/proc' --exclude '/run' --exclude '/sys' --exclude '/tmp' --exclude '/var/swap' \
         --exclude '/etc/udev/rules.d/70-persistent-net.rules' --exclude '/var/lib/asterisk/astdb.sqlite3-journal' \
         / /tmp/empty/ | awk '/Total file size/ { gsub(/,/, "", $4); print int($4 / 1024) }')
     # use image-info on backup image to get space and size information
-    read -r root_1k root_used root_avail root_pct_use <<<$($IMAGE_INFO_BIN "$FULL_PATH" | awk '$1=="root" {print $3, $4, $5, $6}')
+    # shellcheck disable=SC2034
+    read -r root_1k root_used root_avail root_pct_use <<<$("$IMAGE_INFO_BIN" "$FULL_PATH" | awk '$1=="root" {print $3, $4, $5, $6}')
     echo "Image file Root total 1k Blocks available (all space): $root_1k" | do_log
     echo "Total 1K blocks needed for image-backup: $RSYNC_TOTAL_1K_BLOCKS_NEEDED" | do_log
     # Calculate BLOCKS_NEEDED plus 5%
@@ -1347,7 +1343,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
         # BELOW FOR TESTING
         # if (( 1 < (RSYNC_TOTAL_1K_BLOCKS_NEEDED * 105 / 100) )); then
         echo "ERROR: Not enough space in $FILENAME!" | do_log
-        echo "Backup file ($FILENAME) is $(($root_1k / 1024 / 1024)) GB" | do_log
+        echo "Backup file ($FILENAME) is $((root_1k / 1024 / 1024)) GB" | do_log
         echo "Required (with margin): $((RSYNC_TOTAL_1K_BLOCKS_NEEDED * 105 / 100 / 1024 / 1024)) GB" | do_log
         echo "To continue doing incremental backups a new image file needs to be generated or space added to the current backup." | do_log
 
@@ -1393,7 +1389,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
             # Start stopwatch
             START_TIME=$SECONDS
             # Perform incremental backup
-            $IMAGE_BACKUP_BIN "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" "$FULL_PATH" | do_log
+            "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" "$FULL_PATH" | do_log
             IMAGE_BACKUP_RESULT=$?
         else # Logging and progress requested - skip logging output or the log file is huge
             if [[ "$LOG_TO_FILE" == "1" ]]; then
@@ -1402,7 +1398,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
             # Start stopwatch
             START_TIME=$SECONDS
             # Perform backup - not to log file
-            $IMAGE_BACKUP_BIN "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" "$FULL_PATH"
+            "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" "$FULL_PATH"
             IMAGE_BACKUP_RESULT=$?
         fi
 
@@ -1446,7 +1442,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
         # Start the stopwatch
         START_TIME=$SECONDS
         # Perform the incremental backup
-        $IMAGE_BACKUP_BIN "${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[@]}" "$FULL_PATH" | do_log
+        "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[@]}" "$FULL_PATH" | do_log
         IMAGE_BACKUP_RESULT=$?
     fi
 
@@ -1503,7 +1499,7 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
             echo "" | do_log
             echo "Image creation using image-backup finished. Results from image-info:" | do_log
             # Display new image-info results
-            $IMAGE_INFO_BIN "$FULL_PATH" | do_log
+            "$IMAGE_INFO_BIN" "$FULL_PATH" | do_log
         fi
 
         echo "" | do_log
