@@ -84,21 +84,42 @@ Edit your .conf file (ensure it is in the same directory) to set your backup pat
 	```
 
 3. **Run a Manual Backup:**
-Force an initial backup with space added to the .img file for incremental backups. When running manually it will re-start if not run with `sudo` privlidges and may ask for your `sudo` password.
+Force an initial backup with space added to the .img file for incremental backups. When running manually it will re-start if not run with `sudo` privileges and may ask for your `sudo` password.
 
     ```bash
     ./Backup.sh -i
     ```
     
 4. **Automation:**
-Add to your root crontab to run nightly:
+Example schedule:
+
+1) Edit your root crontab:
 
 	```bash
 	sudo nano /etc/crontab
 	```
-	Add to bottom of file:
+2) Add to bottom of file to run nightly (with the .conf set for "image incremental"):
 	```bash
 	59 23   * * *   root    /bin/bash /usr/local/bin/Backup.sh > /dev/null 2>&1
+	```
+ 3) Add below that to create a full backup image at 3AM each Wednesday:
+	```bash
+	00 03   * * 3   root    /bin/bash /usr/local/bin/Backup.sh -i > /dev/null 2>&1
+	```
+    If you would like to have the crontab jobs write to a log you can change the "> /dev/null" to something like ">> /var/log/Backup_pi.log" - You might also want to set the rotation on that log file:
+	```bash
+	sudo nano /etc/logrotate.d/Backup_pi
+    ```
+	Add the following to the file then save it \<ctrl\>+o \<enter\> then exit  with  \<ctrl\>+x :
+    ```bash
+    /var/log/Backup_pi.log {
+		weekly
+		rotate 4
+		compress
+		missingok
+		notifempty
+		create 0640 root adm
+	}
 	```
 
 ## 📜 License ##
