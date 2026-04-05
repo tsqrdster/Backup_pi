@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Changed the "Shebang" so it will use the BASH version the system has as it's default.
+- Changed README.md to include further information about scheduling the script in the Automation section.
 
 ### Fixed
 
@@ -25,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Rotation of Backups and logs not matching due to quotes around PATTERN variable which included the asterik. Now the asterik is not included in the PATTERN variable and the list of matching backups or logs is correct again.
+- Rotation of Backups and logs not matching due to quotes around PATTERN variable which included the asterisk. Now the asterisk is not included in the PATTERN variable and the list of matching backups or logs is correct again.
 
 ### Removed
 
