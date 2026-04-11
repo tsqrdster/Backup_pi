@@ -1,4 +1,4 @@
-[![ShellCheck](https://github.com/tsqrdster/Backup_pi/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/tsqrdster/Backup_pi/actions/workflows/main.yml) [![Static Badge](https://img.shields.io/badge/Changelog-CHANGELOG.md-brightgreen)](https://github.com/tsqrdster/Backup_pi/CHANGELOG.md)
+[![ShellCheck](https://github.com/tsqrdster/Backup_pi/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/tsqrdster/Backup_pi/actions/workflows/main.yml) [![Static Badge](https://img.shields.io/badge/Changelog-CHANGELOG.md-brightgreen)](https://github.com/tsqrdster/Backup_pi/blob/main/CHANGELOG.md)
 # 🖥️ Backup_pi 🚀
 
 A professional, automated backup solution for Raspberry Pi. This script creates incremental, shrunk, and verified system images while keeping you updated via Telegram, Gotify or Ntfy.
