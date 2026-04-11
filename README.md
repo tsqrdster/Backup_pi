@@ -7,12 +7,14 @@ A professional, automated backup solution for Raspberry Pi. This script creates 
 - **Uses a .conf file for backup options**: Settings for type of backup, backup location, services and Docker containers, image-backup options, messaging and logging can be saved as the defaults for the backup. Backup file and log retention and post image creation options are also set in the .conf file.
 - **Command Line Options to Override .conf Settings**: Command line options for starting a user backup or initial image-backup image so those can be run without changing the .conf settings file.
 - **Automatic Folder Structure and File Naming**: Backup will be placed in the backup location specified in the .conf file under folders by hostname and OS Version with a filename created using that hostname, OS Version and date & time stamp.
+- **Unmounting and Re-mounting of Custom Mounts**: Option to unmount custom mounts prior to the backup, then re-mount them after backup completion. If the mount is not part of the system's fstab mounts and requires a username and password those must be saved in a ".smbcredentials" file in the Backup.sh script's folder (along side the .conf file.)
 - **Stopping and Re-starting of Services and Docker Containers**: If specified in the .conf file, prior to the backup, the specified Services and Docker containers will be stopped then re-started after the backup completes.
 - **Smart Incremental Backups**: Uses image-backup and `rsync` to update the most recent existing image, saving time and SD card wear.
 - **Auto-Shrink**: For backup images that will not be used for incremental backups, `pishrink.sh` can be used to keep image files as small as possible by further compressing them then using gzip on them.
 - **Multi-Partition Trim**: If running from an SD card, dynamically finds and trims both `/boot` and `/` partitions.
 - **Smart Notifications**: Sends success/alerts to **Telegram**, **Gotify** or **Ntfy** with a backup log if set to do so.
 - **Environment Aware**: Automatically detects tool paths (`image-backup`, `rsync`, `fstrim`, etc.) and handles optional features gracefully.
+- **Recovery From Abnormal Exit**: Will catch exit status and recover any changes made to ensure system is in the same state as it was prior to the backup.
 
 ## 🕹️ Usage ##
 
@@ -33,13 +35,23 @@ Using any options will overide the type of backup set in the `Backup.conf` file.
 ## 🛠️ Prerequisites
 The script automatically checks for these. For full functionality, ensure you have:
 
-- `rsync`, `fstrim`, `awk`
+- `rsync`, `fstrim`, `awk`, `pv` - 
+```bash
+sudo atp update && sudo apt install pv util-linux gawk
+``` 
+
+- `git` (for install) -
+```bash
+sudo apt update && sudo apt install git
+```
 
 - image-utilities  from RonR in the RaspberryPi Forum - [https://forums.raspberrypi.com/viewtopic.php?t=332000#p1511694](https://forums.raspberrypi.com/viewtopic.php?t=332000#p1511694)
 
 	- image-backup - Excellent utilitiy for making a backup image of a running Raspberry Pi.
 
-	- image-check - Utility to check the status of an image file.
+	- image-info - Utility to check the status of an image file.
+
+	For some steps on installing these please see the wiki page: [Installing image-utilities on your Raspberry Pi](https://github.com/tsqrdster/Backup_pi/wiki/Installing-image%E2%80%90utilities-on-your-Raspberry-Pi)
 
 (optional)
 
@@ -58,7 +70,7 @@ The script automatically checks for these. For full functionality, ensure you ha
 
 	```bash
 	cd ~
-	mkdir Installs
+	mkdir -p Installs
 	cd Installs
 	git clone https://github.com/tsqrdster/Backup_pi.git
 	cd Backup_pi
@@ -125,6 +137,8 @@ Example schedule:
 ## 📜 License ##
 This project is licensed under the MIT License - see the LICENSE file for details.
 	
-## 🤝 Contributing ##
+## 🤝 Contributing and Thank Yous##
 
 If you find a bug please create an issue for it. Feel free to submit Pull Requests or open Issues if you find a bug or have ideas for new features or notification providers!
+
+Thank you to those that have created the tools that make the backup process a simple task, including RonR for his image-utilities and Drew Bonasera for Pishrink!

@@ -16,6 +16,9 @@ MARKER_FILE="/media/usb1/Backups/.USB_IS_HERE"
 LOG_TO_FILE=1
 LOG_TO_FILE_DIRECTORY="/media/usb1/Backups/Backup_pi/log"
 
+# --- Mounts can be unmounted prior to backup (then re-mounted after)
+UNMOUNT_CUSTOM_MOUNTS_PRIOR_TO_BACKUP=0
+
 # --- Services and Docker containers to stop & re-start
 STOP_SERVICES=1
 # A space-separated list of Services

@@ -9,12 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added .config option "UNMOUNT_CUSTOM_MOUNTS_PRIOR_TO_BACKUP" which will scan system for custom mounts, either from the fstab or manually added, then temporarily unmount those found prior to running the backup, then re-mount them after the backup completes.
+- Added cleanup function and trap to perform necessary actions to restore system (mounts and services) when the script exits (successful or halted execution...)
+
 ### Changed
 
 - Changed the "Shebang" so it will use the BASH version the system has as it's default.
-- Changed README.md to include further information about scheduling the script in the Automation section.
+- Changed README.md to include new information on the unmount option and further information on prerequisites and more details about scheduling the script in the Automation section.
 
 ### Fixed
+
+- Added checks to skip messages if .conf is not set to stop any services or containers.
 
 ### Removed
 

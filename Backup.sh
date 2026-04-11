@@ -25,6 +25,16 @@ if [[ $EUID -ne 0 ]]; then
     exec sudo "$0" "$@"
 fi
 
+# Arrays to keep track of different mount types
+FSTAB_MOUNTS=()
+declare -a MANUAL_MOUNTS
+declare -a MANUAL_PATHS  # New array for clean paths
+
+# The Flags: starts as "false"
+DRIVES_ARE_UNMOUNTED=false
+SERVICES_STOPPED=false
+DOCKER_CONTAINERS_STOPPED=false
+
 check_commands() {
     local MISSING=0
     # Loop through every command name you pass to the function
@@ -78,13 +88,6 @@ log_directory_check() {
     echo ""
 }
 
-# Ensure backup folder structure exists, try to create it
-directory_check() {
-    echo "Checking for backup directory:  ${BACKUP_PATH} and creating if missing" | do_log
-    echo "" | do_log
-    [ ! -d "$BACKUP_PATH" ] && mkdir -p "$BACKUP_PATH"
-}
-
 # Check if external log file is enabled and if so tee to that file (and std output also)
 do_log() {
     # Combine them here once to ensure the path is clean
@@ -96,6 +99,213 @@ do_log() {
         cat # Just passes the text through without saving to a file
     fi
 }
+
+# Ensure backup folder structure exists, try to create it
+directory_check() {
+    echo "Checking for backup directory:  ${BACKUP_PATH} and creating if missing" | do_log
+    echo "" | do_log
+    [ ! -d "$BACKUP_PATH" ] && mkdir -p "$BACKUP_PATH"
+}
+
+# 1. FIND AND ANALYZE THE CUSTOM MOUNTS
+find_custom_mounts() {
+    echo "Checking for custom mounts..."
+    # Get the array of mounts not part of the OS (using excluded folders)
+    local targets
+    targets=$(findmnt --real -nlo TARGET | grep -vE "^/(boot|media|mnt|srv|opt|var|dev|proc|sys)?(/|$)")
+
+    # local targets=$(findmnt --real -nlo TARGET | grep -vE "^/(boot|media|mnt|srv|opt|var|dev|proc|sys)?(/|$)")
+
+    if [ -z "$targets" ]; then
+
+        echo "No custom mounts found." | do_log
+        echo "" | do_log
+        return
+    fi
+
+    for mnt in $targets; do
+
+        # Check if the mount exists in fstab
+        if findmnt --fstab --target "$mnt" >/dev/null 2>&1; then
+            FSTAB_MOUNTS+=("$mnt")
+            echo "Found fstab mount: $mnt" | do_log
+        else # Not in fstab! Save its live mount command details
+            # FIRST ENSURE THE .smbcredentials file exists
+            # Define the expected path to the credentials file
+            CREDS_FILE="$SCRIPT_DIR/.smbcredentials"
+
+            # Verify the file exists and is not empty
+            if [[ ! -f "$CREDS_FILE" ]]; then
+                echo "❌ ERROR: Credentials file missing at $CREDS_FILE" | do_log
+                exit 1
+            elif [[ ! -s "$CREDS_FILE" ]]; then
+                echo "❌ ERROR: Credentials file at $CREDS_FILE is empty" | do_log
+                exit 1
+            fi
+
+            # echo "✅ Credentials file verified."
+            # We need: Source (device), FSType, and Options
+            local src
+            local typ
+            local opt
+            src=$(findmnt -nlo SOURCE "$mnt")
+            typ=$(findmnt -nlo FSTYPE "$mnt")
+            opt=$(findmnt -nlo OPTIONS "$mnt")
+
+            # Re-inject credentials for CIFS
+            if [[ "$typ" == "cifs" ]]; then
+                # Clean up potential duplicate 'user' tags findmnt might show
+                # This catches 'user=' OR 'username='
+                opt=$(echo "$opt" | sed -E 's/user(name)?=[^,]*//g; s/password=[^,]*//g; s/,,/,/g')
+                # # Finds the home directory of the person who typed 'sudo'
+                # local real_home
+                # real_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+                # opt="credentials=${real_home:-$HOME}/.smbcredentials,$opt"
+                # opt="credentials=$HOME/.smbcredentials,$opt"
+                # SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)
+                opt="credentials=$SCRIPT_DIR/.smbcredentials,$opt"
+            fi
+            # MANUAL_MOUNTS+=("sudo mount -t $typ -o \"$opt\" \"$src\" \"$mnt\"") # "$mnt|$info")
+            MANUAL_MOUNTS+=("sudo mount -t $typ -o \"$opt\" \"$src\" \"$mnt\"")
+            MANUAL_PATHS+=("$mnt") # Save the clean path here
+            echo "Found custom mount: $mnt   with Source: $src  Type: $typ  Options: $opt" | do_log
+        fi
+        echo "" | do_log
+    done
+
+}
+
+# 2. UNMOUNT FUNCTION
+unmount_custom_mounts() {
+
+    for mnt in "${FSTAB_MOUNTS[@]}"; do
+        DRIVES_ARE_UNMOUNTED=true
+        echo "Attempting to unmount $mnt..." | do_log
+        # timeout 10s: If it's busy, it stops trying after 10 seconds
+        # sudo umount -l: "Lazy" unmount detaches it now, cleans up later
+        if sudo timeout 10s umount -l "$mnt"; then
+            echo "Successfully detached fstab mount:  $mnt" | do_log
+        else
+            echo "Warning: $mnt is very busy. Lazy unmount initiated." | do_log
+        fi
+
+        # Give the system a split second to settle
+        sleep 1
+
+        # Check if the folder is empty
+        if [ -z "$(ls -A "$mnt" 2>/dev/null)" ]; then
+            echo "✅ Confirmed: $mnt is empty and unmounted." | do_log
+            DRIVES_ARE_UNMOUNTED=true
+        else
+            echo "⚠️ ALERT: $mnt STILL HAS FILES!" | do_log
+            echo "These might be 'ghost files' sitting on your SD card." | do_log
+            echo "" | do_log
+            # Optional: exit 1  <-- You could stop the backup here for safety
+        fi
+        # We successfully (or lazily) unmounted at least one drive
+        DRIVES_ARE_UNMOUNTED=true
+    done
+
+    # Extract the mount point (the last 'word') from each command in the array
+    # for cmd in "${MANUAL_MOUNTS[@]}"; do
+    # Use the index to keep the command and path synced
+    for i in "${!MANUAL_PATHS[@]}"; do
+        local mnt="${MANUAL_PATHS[$i]}"
+        local cmd="${MANUAL_MOUNTS[$i]}"
+        DRIVES_ARE_UNMOUNTED=true
+        # This grabs the last argument of the saved command
+        # local mnt=$(echo "$cmd" | awk '{print $NF}' | tr -d '"')
+        # Bulletproof Move 2: Space-safe way to get the mount point
+        # Instead of awk, we extract it from the command we just built
+        # local mnt=$(echo "$cmd" | grep -oP '(?<=" )/[^"]+(?=")')
+        # If the regex is too complex, just use the 'mnt' you had during the find phase
+
+        echo "Attempting to unmount $mnt..." | do_log
+        # timeout 10s: If it's busy, it stops trying after 10 seconds
+        # sudo umount -l: "Lazy" unmount detaches it now, cleans up later
+        if sudo timeout 10s umount -l "$mnt"; then
+            echo "Successfully detached manual mount: $mnt" | do_log
+        else
+            echo "Warning: $mnt is very busy. Lazy unmount initiated." | do_log
+        fi
+        
+        # Give the system a split second to settle
+        sleep 1
+
+        # Check if the folder is empty
+        # if [ -z "$(ls -A "$mnt" 2>/dev/null)" ]; then
+        # Bulletproof Move 3: Sudo check for ghost files
+        if [ -z "$(sudo ls -A "$mnt" 2>/dev/null)" ]; then
+            echo "✅ Confirmed: $mnt is empty and unmounted." | do_log
+            DRIVES_ARE_UNMOUNTED=true
+        else
+            echo "⚠️ ALERT: $mnt STILL HAS FILES!" | do_log
+            echo "These might be 'ghost files' sitting on your SD card." | do_log
+            # Optional: exit 1  <-- You could stop the backup here for safety
+        fi
+
+        # We successfully (or lazily) unmounted at least one drive
+        DRIVES_ARE_UNMOUNTED=true
+        echo "" | do_log
+    done
+
+}
+
+# 3. RE-MOUNT
+remount_custom_mounts() {
+
+    # A. Remount everything from fstab (simple)
+    echo "Restoring fstab mounts..." | do_log
+    sudo mount -a
+    echo "" | do_log
+
+    # B. Manually remount the ones that weren't in fstab
+    if [ ${#MANUAL_MOUNTS[@]} -eq 0 ]; then
+        echo "No manual mounts to restore." | do_log
+        echo "" | do_log
+        DRIVES_ARE_UNMOUNTED=false
+        return
+    fi
+
+    echo "" | do_log
+    echo "Restoring mounts from memory..."
+    for cmd in "${MANUAL_MOUNTS[@]}"; do
+        echo "Running: $cmd" | do_log
+        eval "$cmd"
+        # Grab the mount point from the end of the command
+        local mnt
+        mnt=$(echo "$cmd" | awk '{print $NF}' | tr -d '"')
+
+        # VERIFICATION: Check if the directory is readable and NOT empty
+        # (ls -A returns true if there is at least one file/folder inside)
+        if [ -d "$mnt" ] && [ "$(sudo ls -A "$mnt")" ]; then
+            echo "✅ Verified: $mnt is back online." | do_log
+        else
+            echo "⚠️ Warning: $mnt appears empty. Remount might have failed." | do_log
+        fi
+        echo "" | do_log
+    done
+    DRIVES_ARE_UNMOUNTED=false
+}
+
+# This function runs automatically when the script finishes or is interrupted (Ctrl+C)
+cleanup() {
+    # Only run the remount if the flag was switched to "true"
+    if [ "$DRIVES_ARE_UNMOUNTED" = true ]; then
+        echo "Script finished or interrupted. Ensuring drives are remounted..." | do_log
+        remount_custom_mounts
+    else
+        echo "Cleanup: No unmounted drives to restore." | do_log
+        echo "" | do_log
+    fi
+    if [ "$SERVICES_STOPPED" = true ] || [ "$DOCKER_CONTAINERS_STOPPED" = true ]; then
+        startServices
+    fi
+
+}
+
+# Triggers on Exit, Ctrl+C (INT), and Terminal closure (TERM)
+trap cleanup EXIT INT TERM
 
 # Send messages as set in config
 send_messages() {
@@ -169,6 +379,9 @@ send_log_messages() {
 }
 
 stopServices() {
+    if [[ "$STOP_CONTAINERS" == "0" && "$STOP_SERVICES" == "0" ]]; then
+        return 0
+    fi
     echo "Stopping Docker containers and services before backup..." | do_log
     echo | do_log
     if [[ "$STOP_CONTAINERS" == "1" ]]; then
@@ -180,6 +393,7 @@ stopServices() {
             for container in $DOCKER_CONTAINERS; do
                 echo "Processing: $container..." | do_log
                 docker stop "$container" >/dev/null
+                DOCKER_CONTAINERS_STOPPED=true
             done
 
             echo "All containers specified to be stopped have been processed." | do_log
@@ -198,6 +412,7 @@ stopServices() {
             for services in $SERVICES_RUNNING; do
                 echo "Processing: $services..." | do_log
                 systemctl stop "$services" | do_log
+                SERVICES_STOPPED=true
             done
 
             echo "All services specified to be stopped have been processed." | do_log
@@ -211,6 +426,9 @@ stopServices() {
 }
 
 startServices() {
+    if [[ "$STOP_CONTAINERS" == "0" && "$STOP_SERVICES" == "0" ]]; then
+        return 0
+    fi
     echo "Starting the stopped services and Docker containers..." | do_log
     echo | do_log
     # 1. Convert the strings into a temporary array
@@ -229,7 +447,7 @@ startServices() {
                 echo "Starting: $service" | do_log
                 systemctl start "$service" | do_log
             done
-
+            SERVICES_STOPPED=false
             echo "All services stopped prior to the backup have been restarted." | do_log
             echo | do_log
         else
@@ -249,7 +467,7 @@ startServices() {
                 echo "Starting: $container" | do_log
                 docker start "$container" >/dev/null
             done
-
+            DOCKER_CONTAINERS_STOPPED=false
             echo "All containers specified to be stopped have been restarted." | do_log
             # echo | do_log
         else
@@ -345,6 +563,8 @@ read -r -a IMAGE_BACKUP_OPTIONS_ARRAY <<<"$IMAGE_BACKUP_OPTIONS"
 # MARKER_FILE="/media/usb0/Backups/.USB_IS_HERE"
 # LOG_TO_FILE=1
 # LOG_TO_FILE_DIRECTORY="/home/pi/Installs/Backup_pi/log"
+# --- Mounts can be unmounted prior to backup (then re-mounted after)
+# UNMOUNT_CUSTOM_MOUNTS_PRIOR_TO_BACKUP=0
 # --- Services and Docker containers to stop & re-start
 # STOP_SERVICES=1
 # STOP_CONTAINERS=1
@@ -632,6 +852,17 @@ if [ "$USB_USAGE" -gt 90 ]; then
     # Optional: exit 1  <-- Add this if you want to abort the backup when full
 fi
 
+if [[ "$UNMOUNT_CUSTOM_MOUNTS_PRIOR_TO_BACKUP" == "1" ]]; then
+    echo "Checking for custom mounts to unmount prior to starting the backup..." | do_log
+    echo "" | do_log
+    find_custom_mounts 
+    if [ ${#FSTAB_MOUNTS[@]} -gt 0 ] || [ ${#MANUAL_MOUNTS[@]} -gt 0 ]; then
+        echo "Unmounting the custom mounts found..." | do_log
+        unmount_custom_mounts
+        echo "" | do_log
+    fi
+fi
+
 # START BACKUP PROCESSING - USER BACKUP MODES FIRST
 if [[ "$BACKUP_MODE" == "USER" ]]; then
     # 1. Check if the home directory exists before proceeding
@@ -753,6 +984,11 @@ if [[ "$BACKUP_MODE" == "USER" ]]; then
         echo "Rotation complete." | do_log
         echo "" | do_log
 
+        if [ "$DRIVES_ARE_UNMOUNTED" = true ]; then
+            # echo "Script finished or interrupted. Ensuring drives are remounted..." | do_log
+            remount_custom_mounts
+        fi
+
         send_messages "$FINAL_REPORT"
         if [[ "$LOG_TO_FILE" == "1" ]]; then
             echo "" >>"$FULL_LOG_PATH"
@@ -835,6 +1071,11 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
         echo "Required (with margin): $((REQUIRED_SPACE / 1024 / 1024 / 1024)) GB" | do_log
         echo "" | do_log
 
+        if [ "$DRIVES_ARE_UNMOUNTED" = true ]; then
+            echo "" | do_log
+            remount_custom_mounts
+        fi
+
         # Send error messages if set to do so
         send_messages "❌ Backup FAILED for $HOSTNAME. INSUFFICIENT SPACE ON USB DRIVE. Check Backup_pi.log"
 
@@ -848,8 +1089,10 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
 
     # Stop services and Docker containers before backup
     stopServices
-    echo "Services stopped..." | do_log
-    echo "" | do_log
+    if [[ "$STOP_CONTAINERS" == "1" || "$STOP_SERVICES" == "1" ]]; then
+        echo "Services stopped..." | do_log
+        echo "" | do_log
+    fi
 
     # Run the backup - check if backing up SD card
     if [ -b "/dev/mmcblk0" ]; then
@@ -1131,6 +1374,11 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
             sleep 360
         fi
 
+        if [ "$DRIVES_ARE_UNMOUNTED" = true ]; then
+            echo "" | do_log
+            remount_custom_mounts
+        fi
+
         send_messages "❌ Backup FAILED for $HOSTNAME during imaging. Check Backup_pi.log"
         send_log_messages
         exit 1
@@ -1143,7 +1391,12 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
         fi
 
         echo "" | do_log
-        echo "Image creation finished. Restarting services." | do_log
+        if [[ "$STOP_CONTAINERS" == "1" || "$STOP_SERVICES" == "1" ]]; then
+            echo "Image creation finished. Restarting services." | do_log
+        else
+            echo "Image creation finished." | do_log
+        fi
+        
 
         # Re-start services and Docker containers
         startServices
@@ -1190,6 +1443,12 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
                     echo "" | do_log
 
                     [ -f "$FULL_PATH" ] && rm "$FULL_PATH"
+
+                    if [ "$DRIVES_ARE_UNMOUNTED" = true ]; then
+                        echo "" | do_log
+                        remount_custom_mounts
+                    fi
+
                     send_messages "❌ Backup FAILED for $HOSTNAME. Hash mismatch! Your backup might be corrupt. Check Backup_pi.log"
                     send_log_messages
                     exit 1
@@ -1267,6 +1526,12 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
         echo "" | do_log
         sleep 240
     fi
+
+    if [ "$DRIVES_ARE_UNMOUNTED" = true ]; then
+        echo "" | do_log
+        remount_custom_mounts
+    fi
+
     # 1. Get exact bytes (Works for both .img and .img.gz)
     FINAL_BYTES=$(stat -c%s "$FULL_PATH")
 
@@ -1374,8 +1639,10 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
 
     # Stop services and Docker containers before backup
     stopServices
-    echo "Services stopped..." | do_log
-    echo "" | do_log
+    if [[ "$STOP_CONTAINERS" == "1" || "$STOP_SERVICES" == "1" ]]; then
+        echo "Services stopped..." | do_log
+        echo "" | do_log
+    fi
 
     echo "Starting incremental update to image file using image-backup command:  $IMAGE_BACKUP_BIN $IMAGE_BACKUP_OPTIONS $FULL_PATH" | do_log # /usr/local/bin/image-backup $IMAGE_BACKUP_OPTIONS -i $FULL_PATH,$IMAGE_BACKUP_INITIAL_IMAGE_SIZE,$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS $IMAGE_BACKUP_POST_IMAGE_NAME_OPTIONS" | do_log
     echo "" | do_log
@@ -1502,6 +1769,12 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
             echo "Pausing for 6 mins. for internet to start..." | do_log
             sleep 360
         fi
+
+        if [ "$DRIVES_ARE_UNMOUNTED" = true ]; then
+            echo "" | do_log
+            remount_custom_mounts
+        fi
+
         send_messages "❌ Backup FAILED for $HOSTNAME during imaging. Check Backup_pi.log"
         send_log_messages
         exit 1
@@ -1514,9 +1787,12 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
         fi
 
         echo "" | do_log
-
-        echo "Image creation finished. Restarting services." | do_log
-
+        if [[ "$STOP_CONTAINERS" == "1" || "$STOP_SERVICES" == "1" ]]; then
+            echo "Image creation finished. Restarting services." | do_log
+        else
+            echo "Image creation finished." | do_log
+        fi
+        
         # Restart services and Docker containers
         startServices
 
@@ -1564,6 +1840,12 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
                     echo "" | do_log
 
                     [ -f "$FULL_PATH" ] && rm "$FULL_PATH"
+
+                    if [ "$DRIVES_ARE_UNMOUNTED" = true ]; then
+                        echo "" | do_log
+                        remount_custom_mounts
+                    fi
+
                     send_messages "❌ Backup FAILED for $HOSTNAME. Read-back verification failed! Your backup might be corrupt. Check Backup_pi.log"
                     send_log_messages
                     exit 1
@@ -1582,6 +1864,11 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
     # NO PISHRINK ON AN INCREMENTAL
 
     # NO FILE OR LOG ROTATION ON AN INCREMENTAL
+
+    if [ "$DRIVES_ARE_UNMOUNTED" = true ]; then
+        echo "" | do_log
+        remount_custom_mounts
+    fi
 
     # Send messages if so configured  CUT || "$SEND_CONFIRMATON_MESSAGE_ONLY" == "1" 
     if [[ "$SEND_MESSAGES_ONLY_ON_ERROR" == "0" ]]; then

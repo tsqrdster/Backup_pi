@@ -1,5 +1,6 @@
 # Ignore the secrets file
 Backup.conf
+.smbcredentials
 
 # Ignore all log files
 *.log
