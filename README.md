@@ -1,4 +1,4 @@
-[![ShellCheck](https://github.com/tsqrdster/Backup_pi/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/tsqrdster/Backup_pi/actions/workflows/main.yml)
+[![ShellCheck](https://github.com/tsqrdster/Backup_pi/actions/workflows/main.yml/badge.svg?branch=main)](https://github.com/tsqrdster/Backup_pi/actions/workflows/main.yml) [![Static Badge](https://img.shields.io/badge/Changelog-CHANGELOG.md-brightgreen)](https://github.com/tsqrdster/Backup_pi/CHANGELOG.md)
 # 🖥️ Backup_pi 🚀
 
 A professional, automated backup solution for Raspberry Pi. This script creates incremental, shrunk, and verified system images while keeping you updated via Telegram, Gotify or Ntfy.
@@ -37,7 +37,7 @@ The script automatically checks for these. For full functionality, ensure you ha
 
 - `rsync`, `fstrim`, `awk`, `pv` - 
 ```bash
-sudo atp update && sudo apt install pv util-linux gawk
+sudo apt update && sudo apt install pv util-linux gawk
 ``` 
 
 - `git` (for install) -
@@ -137,8 +137,8 @@ Example schedule:
 ## 📜 License ##
 This project is licensed under the MIT License - see the LICENSE file for details.
 	
-## 🤝 Contributing and Thank Yous##
+## 🤝 Contributing and Thank You ##
 
 If you find a bug please create an issue for it. Feel free to submit Pull Requests or open Issues if you find a bug or have ideas for new features or notification providers!
 
-Thank you to those that have created the tools that make the backup process a simple task, including RonR for his image-utilities and Drew Bonasera for Pishrink!
+Thank you to those that have created the tools that make the backup process a simple task, including RonR for his image-utils and Drew Bonasera for PiShrink!
