@@ -1361,6 +1361,11 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
         echo "ERROR: Backup failed during imaging! Cleaning up partial file and re-starting services..." | do_log
         echo "" | do_log
 
+        if [ "$DRIVES_ARE_UNMOUNTED" = true ]; then
+            echo "" | do_log
+            remount_custom_mounts
+        fi
+
         # Re-start services and Docker containers
         startServices
         echo "" | do_log
@@ -1372,11 +1377,6 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
         if [[ "$SEND_TELEGRAM_MESSAGES" == "1" || "$SEND_GOTIFY_MESSAGES" == "1" || "$SEND_NTFY_MESSAGES" == "1" ]]; then
             echo "Pausing for 6 mins. for internet to start..." | do_log
             sleep 360
-        fi
-
-        if [ "$DRIVES_ARE_UNMOUNTED" = true ]; then
-            echo "" | do_log
-            remount_custom_mounts
         fi
 
         send_messages "❌ Backup FAILED for $HOSTNAME during imaging. Check Backup_pi.log"
@@ -1397,6 +1397,10 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
             echo "Image creation finished." | do_log
         fi
         
+        if [ "$DRIVES_ARE_UNMOUNTED" = true ]; then
+            echo "" | do_log
+            remount_custom_mounts
+        fi
 
         # Re-start services and Docker containers
         startServices
@@ -1760,6 +1764,11 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
         echo "ERROR: Backup failed during imaging! Cleaning up partial file and re-starting services..." | do_log
         echo "" | do_log
 
+        if [ "$DRIVES_ARE_UNMOUNTED" = true ]; then
+            echo "" | do_log
+            remount_custom_mounts
+        fi
+
         startServices
         echo "" | do_log
         echo "CRITICAL: Imaging failed! (image-backup Return Code: $IMAGE_BACKUP_RESULT)" | do_log
@@ -1768,11 +1777,6 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
         if [[ "$SEND_TELEGRAM_MESSAGES" == "1" || "$SEND_GOTIFY_MESSAGES" == "1" || "$SEND_NTFY_MESSAGES" == "1" ]]; then
             echo "Pausing for 6 mins. for internet to start..." | do_log
             sleep 360
-        fi
-
-        if [ "$DRIVES_ARE_UNMOUNTED" = true ]; then
-            echo "" | do_log
-            remount_custom_mounts
         fi
 
         send_messages "❌ Backup FAILED for $HOSTNAME during imaging. Check Backup_pi.log"
@@ -1793,6 +1797,11 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
             echo "Image creation finished." | do_log
         fi
         
+        if [ "$DRIVES_ARE_UNMOUNTED" = true ]; then
+            echo "" | do_log
+            remount_custom_mounts
+        fi
+
         # Restart services and Docker containers
         startServices
 
