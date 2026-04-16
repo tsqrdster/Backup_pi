@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Changed the "Shebang" so it will use the BASH version the system has as it's default.
+- Changed the calculation for the required space when backing up to a full image file. Rather than requiring the full size of the source device it now uses the used space size of the source device then adds an additional 20 percent and the requested additional megabytes to add.
 - Changed README.md to include new information on the unmount option and further information on prerequisites and more details about scheduling the script in the Automation section.
 
 ### Fixed

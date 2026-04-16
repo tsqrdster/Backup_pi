@@ -11,12 +11,12 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 #
 #    FIX:
 # 
-#            # MARKER_FILE  COULD BE:  "$BACKUP_ROOT/.USB_IS_HERE"
+#            # MARKER_FILE  COULD BE:  "$BACKUP_ROOT/.BACKUP_IS_HERE"
 #
 # ----------------------------------------------------------------------------------------------------------------
-#
 
-# Set for true exit code when using a piped commands
+
+# Set for true exit code when using piped commands
 set -o pipefail
 
 # Check if run as sudo or re-start it if it was not
@@ -487,6 +487,21 @@ find_incremental_file() {
     fi
     LATEST_INCREMENTAL_FILENAME=$(basename "$LATEST_INCREMENTAL") #  or: filename="${src_file##*/}"  (faster)
     echo "$LATEST_INCREMENTAL_FILENAME"
+}
+
+check_space_for_backup() {
+    # 1. Get used space in KB for / and /boot (the two main partitions)
+    # --output=used provides just the column we need, tail -n +2 skips the header
+    ROOT_USED=$(df -k / --output=used | tail -n 1)
+    BOOT_USED=$(df -k /boot/firmware --output=used | tail -n 1 2>/dev/null || df -k /boot --output=used | tail -n 1)
+
+    # 2. Add them together
+    TOTAL_USED_KB=$((ROOT_USED + BOOT_USED))
+
+    # 3. Calculate estimate (120% of total) and convert to MB
+    # We multiply by 120 then divide by 100 to handle the percentage in integer math
+    ESTIMATE_KB=$((TOTAL_USED_KB * 120 / 100))
+    # ESTIMATE_MB=$((ESTIMATE_KB / 1024))
 }
 
 # --- Function to scrub CSV strings to remove progress options for CRON jobs (e.g. "--progress,--stats,--exclude") ---
@@ -1003,13 +1018,18 @@ if [[ "$BACKUP_MODE" == "USER" ]]; then
 elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
 
     echo "Calculating backup size and checking if destination has enough space for backup..." | do_log
-
+    
+    check_space_for_backup
     # Get source size in bytes
-    SOURCE_SIZE=$(sudo blockdev --getsize64 "$SOURCE_DEV")
+    # SOURCE_SIZE=$(sudo blockdev --getsize64 "$SOURCE_DEV")
+    # SOURCE_SIZE=$((ESTIMATE_KB * 1024))
+    SOURCE_SIZE_MB=$((ESTIMATE_KB / 1024))
 
     # Get available space on backup drive in bytes
     # 'df -B1' forces the output into 1-byte blocks for exact math
-    AVAIL_SPACE=$(df -B1 --output=avail "$BACKUP_PATH" | tail -n 1)
+    # AVAIL_SPACE=$(df -B1 --output=avail "$BACKUP_PATH" | tail -n 1)
+    # -m provides the output in Megabytes (1024 * 1024 bytes)
+    AVAIL_SPACE_MB=$(df -m --output=avail "$BACKUP_PATH" | tail -n 1)
 
     #     # Add a 5% safety margin (backup needs to be slightly larger than source)
     #     REQUIRED_SPACE=$(( SOURCE_SIZE + (SOURCE_SIZE / 20) ))
@@ -1019,56 +1039,90 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
     #
     # 1. Get the last sector and add a safety buffer of 32768 sectors (16MB)
     # This ensures we never miss the end of the filesystem or the GPT backup table
-    LAST_SECTOR=$(sudo parted -s "$SOURCE_DEV" unit s print | awk '/^[ ]*[0-9]/ {print $3}' | sed 's/s//' | sort -n | tail -1)
+    # LAST_SECTOR=$(sudo parted -s "$SOURCE_DEV" unit s print | awk '/^[ ]*[0-9]/ {print $3}' | sed 's/s//' | sort -n | tail -1)
     # TOTAL_SECTORS=$(( LAST_SECTOR + 32768 ))
     #
     # echo "Last Sector: $LAST_SECTOR | Copying up to: $TOTAL_SECTORS" | do_log
 
-    if [ -z "$LAST_SECTOR" ]; then
-        echo "ERROR: Could not detect partitions on $SOURCE_DEV. Defaulting to full copy." | do_log
-        TOTAL_SECTORS=""
-    else
+    # if [ -z "$LAST_SECTOR" ]; then
+    #     echo "ERROR: Could not detect partitions on $SOURCE_DEV. Defaulting to full copy." | do_log
+    #     TOTAL_SECTORS=""
+    # else
         # # Calculate 1MB blocks: (Sector * 512 / 1024 / 1024)
         # 2. Convert to Megabytes and ROUND UP by adding 16MB of safety buffer
         # This ensures we always land on a clean 1MB boundary that PiShrink can read
-        AUTO_COUNT=$(((LAST_SECTOR * 512 / 1048576) + 16))
+        # AUTO_COUNT=$(((LAST_SECTOR * 512 / 1048576) + 16))
         # echo "Detected last partition ends at sector $LAST_SECTOR. Optimized count: $AUTO_COUNT" | do_log
 
-        echo "Calculated Count: $AUTO_COUNT (1MB blocks)" | do_log
+        # echo "Calculated Count: $AUTO_COUNT (1MB blocks)" | do_log
         # shellcheck disable=SC2034
-        TOTAL_SECTORS=$((LAST_SECTOR + 32768))
+    #     TOTAL_SECTORS=$((LAST_SECTOR + 32768))
 
-        echo "Last Sector: $LAST_SECTOR | Copying up to: $AUTO_COUNT" | do_log
-    fi
+        # echo "Last Sector: $LAST_SECTOR | Copying up to: $AUTO_COUNT" | do_log
+    # fi
 
-    if [ -n "$LAST_SECTOR" ]; then
+    # if [ -n "$LAST_SECTOR" ]; then
         # Calculate exactly how many bytes we will actually copy
         # (Sector + 1) * 512 bytes
-        ACTUAL_DATA_BYTES=$(((LAST_SECTOR + 1) * 512))
+        # ACTUAL_DATA_BYTES=$(((LAST_SECTOR + 1) * 512))
+    # 1. Initialize additional space to 0 if it's empty or not a number
+    ADD_SPACE_MB=${IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS:-0}
 
+        # # 2. Convert that MB value to Bytes
+        # ADD_SPACE_BYTES=$((ADD_SPACE_MB * 1024 * 1024))
         # 2. Update your Required Space calculation
         # We use the actual data size instead of the full disk size
         # Adding 5% buffer: ACTUAL_DATA_BYTES + (ACTUAL_DATA_BYTES / 20)
-        REQUIRED_SPACE=$((ACTUAL_DATA_BYTES + (ACTUAL_DATA_BYTES / 20)))
-
-        echo "Physical disk is larger, but partitions only use: $((ACTUAL_DATA_BYTES / 1024 / 1024)) MB" | do_log
-        echo "Required space (with 5% buffer): $((REQUIRED_SPACE / 1024 / 1024)) MB" | do_log
-    else
+        # REQUIRED_SPACE=$((ACTUAL_DATA_BYTES + (ACTUAL_DATA_BYTES / 20)))
+        # REQUIRED_SPACE=$((SOURCE_SIZE + (SOURCE_SIZE / 20)))
+        # 3. Calculate your REQUIRED_SPACE
+        # (SOURCE_SIZE + 20% buffer + your additional MB space)
+        # REQUIRED_SPACE=$((SOURCE_SIZE + (SOURCE_SIZE / 5) + ADD_SPACE_BYTES))
+    REQUIRED_SPACE_MB=$((SOURCE_SIZE_MB + (SOURCE_SIZE_MB / 5) + ADD_SPACE_MB))
+    # ACTUAL_REQUIRED_SPACE=$((SOURCE_SIZE + (SOURCE_SIZE / 20) + ADD_SPACE_BYTES))
+    ACTUAL_REQUIRED_SPACE_MB=$((SOURCE_SIZE_MB + (SOURCE_SIZE_MB / 20) + ADD_SPACE_MB))
+        # echo "Physical disk is larger, but partitions only use: $((ACTUAL_DATA_BYTES / 1024 / 1024)) MB" | do_log
+        # echo "Required space (with 5% buffer): $((REQUIRED_SPACE / 1024 / 1024)) MB" | do_log
+    # else
         # Fallback if parted fails: use the old blockdev method
-        SOURCE_SIZE=$(sudo blockdev --getsize64 "$SOURCE_DEV")
-        REQUIRED_SPACE=$((SOURCE_SIZE + (SOURCE_SIZE / 20)))
-        echo "Warning: Could not detect partitions. Using full disk size for space check." | do_log
-    fi
+        # SOURCE_SIZE=$(sudo blockdev --getsize64 "$SOURCE_DEV")
+    #     SOURCE_SIZE_MB=$(sudo blockdev --getsize64 "$SOURCE_DEV" | awk '{print int($1 / 1024 / 1024)}')
 
-    echo "Source size: $((SOURCE_SIZE / 1024 / 1024 / 1024)) GB" | do_log
-    echo "Available space: $((AVAIL_SPACE / 1024 / 1024 / 1024)) GB" | do_log
+        # REQUIRED_SPACE=$((SOURCE_SIZE + (SOURCE_SIZE / 5) + ADD_SPACE_BYTES))
+    #     REQUIRED_SPACE_MB=$((SOURCE_SIZE_MB + (SOURCE_SIZE_MB / 5) + ADD_SPACE_MB))
+        # ACTUAL_REQUIRED_SPACE=$REQUIRED_SPACE
+    #     ACTUAL_REQUIRED_SPACE_MB=$((SOURCE_SIZE_MB + (SOURCE_SIZE_MB / 20) + ADD_SPACE_MB))
+    #     echo "Warning: Could not detect partitions. Using full disk size for space check." | do_log
+    # fi
 
-    echo "Last partition ends at sector: $LAST_SECTOR" | do_log
-    echo "Calculated count for 1MB block size: $AUTO_COUNT" | do_log
+    # Get the sizes in MB first
+    SOURCE_SIZE_GB_TIMES_TEN=$((SOURCE_SIZE_MB * 10 / 1024))
+    ADD_SPACE_GB_TIMES_TEN=$((ADD_SPACE_MB * 10 / 1024)) # / 1024 / 1024))
+    REQUIRED_SPACE_GB_TIMES_TEN=$((REQUIRED_SPACE_MB * 10 / 1024)) # / 1024 / 1024))
+    ACTUAL_REQUIRED_SPACE_GB_TIMES_TEN=$((ACTUAL_REQUIRED_SPACE_MB * 10 / 1024)) #  / 1024 / 1024))
+    # AVAIL_SPACE_MB_TIMES_TEN=$((AVAIL_SPACE_MB * 10)) # / 1024 / 1024 / 1024))
+    # Multiply MB by 10, then divide by 1024 to get "GB * 10"
+    AVAIL_SPACE_GB_TIMES_TEN=$(( AVAIL_SPACE_MB * 10 / 1024 ))
 
-    if [ "$AVAIL_SPACE" -lt "$REQUIRED_SPACE" ]; then
+    # echo "Source size: $((SOURCE_SIZE / 1024 / 1024 / 1024)) GB" | do_log
+    # echo "Additional requested space added: $((ADD_SPACE_BYTES / 1024 / 1024 / 1024)) GB" | do_log
+    # echo "Required space for .img file: $((REQUIRED_SPACE / 1024 / 1024 / 1024)) GB" | do_log
+    # echo "Available space: $((AVAIL_SPACE / 1024 / 1024 / 1024)) GB" | do_log
+
+    echo "Source size: $((SOURCE_SIZE_GB_TIMES_TEN / 10)).$((SOURCE_SIZE_GB_TIMES_TEN % 10)) GB" | do_log
+    echo "Additional requested space added: $((ADD_SPACE_GB_TIMES_TEN / 10)).$((ADD_SPACE_GB_TIMES_TEN % 10)) GB" | do_log
+    # echo "Required space for .img file: $((REQUIRED_SPACE_MB_TIMES_TEN / 10)).$((REQUIRED_SPACE_MB_TIMES_TEN % 10)) GB" | do_log
+    echo "Required space with requested extra space (with 20% buffer): $((REQUIRED_SPACE_GB_TIMES_TEN / 10)).$((REQUIRED_SPACE_GB_TIMES_TEN % 10)) GB" | do_log
+    echo "Actual space for .img fille will be closer to: $((ACTUAL_REQUIRED_SPACE_GB_TIMES_TEN / 10)).$((ACTUAL_REQUIRED_SPACE_GB_TIMES_TEN % 10)) GB" | do_log
+
+    echo "Available space: $((AVAIL_SPACE_GB_TIMES_TEN / 10)).$((AVAIL_SPACE_GB_TIMES_TEN % 10)) GB" | do_log
+
+    # echo "Last partition ends at sector: $LAST_SECTOR" | do_log
+    # echo "Calculated count for 1MB block size: $AUTO_COUNT" | do_log
+    echo "" | do_log
+    if [ "$AVAIL_SPACE_MB" -lt "$REQUIRED_SPACE_MB" ]; then
         echo "ERROR: Not enough space on $BACKUP_PATH!" | do_log
-        echo "Required (with margin): $((REQUIRED_SPACE / 1024 / 1024 / 1024)) GB" | do_log
+        echo "Required (with margin): $((REQUIRED_SPACE_MB / 1024)) GB" | do_log
         echo "" | do_log
 
         if [ "$DRIVES_ARE_UNMOUNTED" = true ]; then
@@ -1077,12 +1131,12 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
         fi
 
         # Send error messages if set to do so
-        send_messages "❌ Backup FAILED for $HOSTNAME. INSUFFICIENT SPACE ON USB DRIVE. Check Backup_pi.log"
+        send_messages "❌ Backup FAILED for $HOSTNAME. INSUFFICIENT SPACE ON BACKUP DRIVE. Check Backup_pi.log"
 
         send_log_messages
         exit 1
     fi
-    echo "" | do_log
+    
     echo "Space check passed. Starting backup imaging..." | do_log
 
     echo "" | do_log
@@ -1601,30 +1655,100 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
     # rsync -aDH --dry-run --itemize-changes --partial --numeric-ids --delete --force --exclude "${MNTPATH}" --exclude '/dev' \
     # --exclude '/lost+found' --exclude '/media' --exclude '/mnt' --exclude '/proc' --exclude '/run' --exclude '/sys' --exclude '/tmp' --exclude '/var/swap' \
     # --exclude '/etc/udev/rules.d/70-persistent-net.rules' --exclude '/var/lib/asterisk/astdb.sqlite3-journal' "${OPTIONS[@]}" / "${MNTPATH}/")"
-    RSYNC_TOTAL_1K_BLOCKS_NEEDED=$("$RSYNC_BIN" -aDHn --stats --exclude "/tmp/empty/" --exclude '/dev' --exclude '/lost+found' --exclude '/media' \
+    # RSYNC_TOTAL_1K_BLOCKS_NEEDED=$("$RSYNC_BIN" -aDHn --stats --exclude "/tmp/empty/" --exclude '/dev' --exclude '/lost+found' --exclude '/media' \
+    #     --exclude '/mnt' --exclude '/proc' --exclude '/run' --exclude '/sys' --exclude '/tmp' --exclude '/var/swap' \
+    #     --exclude '/etc/udev/rules.d/70-persistent-net.rules' --exclude '/var/lib/asterisk/astdb.sqlite3-journal' \
+    #     / /tmp/empty/ | awk '/Total file size/ { gsub(/,/, "", $4); print int($4 / 1024) }')
+    RSYNC_TOTAL_MB_NEEDED=$("$RSYNC_BIN" -aDHn --stats --exclude "/tmp/empty/" --exclude '/dev' --exclude '/lost+found' --exclude '/media' \
         --exclude '/mnt' --exclude '/proc' --exclude '/run' --exclude '/sys' --exclude '/tmp' --exclude '/var/swap' \
         --exclude '/etc/udev/rules.d/70-persistent-net.rules' --exclude '/var/lib/asterisk/astdb.sqlite3-journal' \
-        / /tmp/empty/ | awk '/Total file size/ { gsub(/,/, "", $4); print int($4 / 1024) }')
+        / /tmp/empty/ | awk '/Total file size/ { gsub(/,/, "", $4); print int($4 / 1024 / 1024) }')
     # use image-info on backup image to get space and size information
     # shellcheck disable=SC2034
     read -r root_1k root_used root_avail root_pct_use <<< "$("$IMAGE_INFO_BIN" "$FULL_PATH" | awk '$1=="root" {print $3, $4, $5, $6}')"
-    echo "Image file Root total 1k Blocks available (all space): $root_1k" | do_log
-    echo "Total 1K blocks needed for image-backup: $RSYNC_TOTAL_1K_BLOCKS_NEEDED" | do_log
-    # Calculate BLOCKS_NEEDED plus 5%
-    BLOCKS_NEEDED_PLUS_5_PERCENT=$((RSYNC_TOTAL_1K_BLOCKS_NEEDED + (RSYNC_TOTAL_1K_BLOCKS_NEEDED / 20)))
+    # echo "Image file Root total 1k Blocks available (all space): $root_1k" | do_log
+    # echo "Image file Root total 1k Blocks used (previous backups): $root_used" | do_log
+    root_used_MB=$((root_used / 1024))
+    # echo "Total 1K blocks needed for FULL image-backup: $RSYNC_TOTAL_1K_BLOCKS_NEEDED" | do_log
+    # INCREMENTAL_UPDATE_BLOCKS_NEEDED=$((RSYNC_TOTAL_1K_BLOCKS_NEEDED - root_used))
+    # INCREMENTAL_UPDATE_MB_NEEDED=$((RSYNC_TOTAL_MB_NEEDED - root_used_MB))
+    # echo "Total 1K blocks needed for this INCREMENTAL image-backup: $INCREMENTAL_UPDATE_BLOCKS_NEEDED" | do_log
 
-    # echo "Image file Root used: $root_used" | do_log
-    # echo "Image file Root available: $root_avail" | do_log
-    # echo "Image file Root percent used: $root_pct_use" | do_log
-    BLOCKS_AVAIL_MINUS_NEEDED=$((root_1k - BLOCKS_NEEDED_PLUS_5_PERCENT))
-    echo "1K Blocks total available - Total 1K blocks needed (Plus 5 percent) = $BLOCKS_AVAIL_MINUS_NEEDED" | do_log
+    # # Calculate BLOCKS_NEEDED plus 5%
+    # BLOCKS_NEEDED_PLUS_5_PERCENT=$((RSYNC_TOTAL_1K_BLOCKS_NEEDED + (RSYNC_TOTAL_1K_BLOCKS_NEEDED / 20)))
+
+    # # echo "Image file Root used: $root_used" | do_log
+    # # echo "Image file Root available: $root_avail" | do_log
+    # # echo "Image file Root percent used: $root_pct_use" | do_log
+    # BLOCKS_AVAIL_MINUS_NEEDED=$((root_1k - BLOCKS_NEEDED_PLUS_5_PERCENT))
+    # echo "1K Blocks total available - Total 1K blocks needed (Plus 5 percent) = $BLOCKS_AVAIL_MINUS_NEEDED" | do_log
+
+    # ROOT_BYTES_AVAILABLE=$((root_1k * 1024))
+    # ROOT_MB_AVAILABLE=$((root_1k / 1024))
+
+    # ROOT_BYTES_USED=$((root_used * 1024))
+    # ROOT_MB_USED=$((root_used / 1024))
+
+    # ROOT_BYTES_UNUSED=$((root_avail * 1024))
+    ROOT_MB_UNUSED=$((root_avail / 1024))
+
+    # ROOT_BYTES_NEEDED=$((RSYNC_TOTAL_1K_BLOCKS_NEEDED * 1024))
+    # ROOT_BYTES_ADDITIONAL_NEEDED=$((INCREMENTAL_UPDATE_BLOCKS_NEEDED * 1024))
+    # ROOT_MB_ADDITIONAL_NEEDED=$((INCREMENTAL_UPDATE_BLOCKS_NEEDED / 1024))
+    ROOT_MB_ADDITIONAL_NEEDED=$((RSYNC_TOTAL_MB_NEEDED - root_used_MB))  # INCREMENTAL_UPDATE_MB_NEEDED
+
+    # echo "Image file Root size available (all space): $ROOT_BYTES_AVAILABLE bytes" | do_log
+    # echo "Total bytes needed for image-backup: $ROOT_BYTES_NEEDED bytes" | do_log
+
+    # 1. Multiply by 10 first to preserve the decimal digit
+    # 2. Divide by (1024 * 1024) to get the "Megabytes * 10"
+    # ROOT_MB_AVAILABLE_TIMES_10=$(( (ROOT_BYTES_AVAILABLE * 10) / 1048576 ))
+    ROOT_MB_AVAILABLE_TIMES_10=$((root_1k * 10 / 1024)) # / 1048576 ))
+    # ROOT_GB_AVAILABLE_TIMES_10=$(( (ROOT_MB_AVAILABLE * 10) / 1024 ))
+
+    # ROOT_MB_USED_TIMES_10=$(( (ROOT_BYTES_USED * 10) / 1048576 ))
+    ROOT_MB_USED_TIMES_10=$((root_used * 10 / 1024)) # / 1048576 ))
+    # ROOT_GB_USED_TIMES_10=$(( (ROOT_MB_USED * 10) / 1024 ))
+
+    # ROOT_MB_UNUSED_TIMES_10=$(( (ROOT_BYTES_UNUSED * 10) / 1048576 ))
+    ROOT_MB_UNUSED_TIMES_10=$((root_avail * 10 / 1024)) # ((ROOT_MB_UNUSED * 10)) # / 1048576 ))
+    # ROOT_GB_UNUSED_TIMES_10=$(( (ROOT_MB_UNUSED * 10) / 1024 ))
+
+    # ROOT_MB_NEEDED_TIMES_10=$(( (ROOT_BYTES_NEEDED * 10) / 1048576 ))
+    # ROOT_MB_ADDITIONAL_NEEDED_TIMES_10=$(( (ROOT_BYTES_ADDITIONAL_NEEDED * 10) / 1048576 ))
+    ROOT_MB_ADDITIONAL_NEEDED_TIMES_10=$((ROOT_MB_ADDITIONAL_NEEDED * 10)) # / 1048576 ))
+    # ROOT_GB_ADDITIONAL_NEEDED_TIMES_10=$(( (ROOT_MB_ADDITIONAL_NEEDED * 10) / 1024 ))
+
+    # 1. Apply the 5% buffer to the 'Times 10' variable
+    # (This keeps the math high-precision before the decimal split)
+    ROOT_MB_NEEDED_BUFFERED_TIMES_10=$(( ROOT_MB_ADDITIONAL_NEEDED_TIMES_10 * 105 / 100 ))
+    # 3. Use /10 for the whole part and %10 for the decimal part
+    # echo "Size: $((TEMP / 10)).$((TEMP % 10)) MB"
+
     echo "" | do_log
-    if ((root_1k < (RSYNC_TOTAL_1K_BLOCKS_NEEDED * 105 / 100))); then
+
+    # echo "Image file Root size available (all space): $((ROOT_MB_AVAILABLE_TIMES_10 / 10)).$((ROOT_MB_AVAILABLE_TIMES_10 % 10)) MB" | do_log
+    # echo "Total bytes needed for INCREMENTAL image-backup: $((ROOT_MB_NEEDED_TIMES_10 / 10)).$((ROOT_MB_NEEDED_TIMES_10 % 10)) MB" | do_log
+
+    echo "Backup image total root size: $((ROOT_MB_AVAILABLE_TIMES_10 / 10)).$((ROOT_MB_AVAILABLE_TIMES_10 % 10)) MB" | do_log
+    echo "Backup image used root space: $((ROOT_MB_USED_TIMES_10 / 10)).$((ROOT_MB_USED_TIMES_10 % 10)) MB" | do_log
+    echo "Backup image available root space: $((ROOT_MB_UNUSED_TIMES_10 / 10)).$((ROOT_MB_UNUSED_TIMES_10 % 10)) MB" | do_log
+    echo "Incremental backup root space needed (with margin): $((ROOT_MB_NEEDED_BUFFERED_TIMES_10 / 10)).$((ROOT_MB_NEEDED_BUFFERED_TIMES_10 % 10)) MB" | do_log
+
+    echo "" | do_log
+    # if ((root_1k < (RSYNC_TOTAL_1K_BLOCKS_NEEDED * 105 / 100))); then
+    # if ((ROOT_BYTES_UNUSED < (ROOT_BYTES_NEEDED * 105 / 100))); then
+    if ((ROOT_MB_UNUSED < (ROOT_MB_ADDITIONAL_NEEDED * 105 / 100))); then
+
         # BELOW FOR TESTING
         # if (( 1 < (RSYNC_TOTAL_1K_BLOCKS_NEEDED * 105 / 100) )); then
+
         echo "ERROR: Not enough space in $FILENAME!" | do_log
-        echo "Backup file ($FILENAME) is $((root_1k / 1024 / 1024)) GB" | do_log
-        echo "Required (with margin): $((RSYNC_TOTAL_1K_BLOCKS_NEEDED * 105 / 100 / 1024 / 1024)) GB" | do_log
+        # echo "Backup file ($FILENAME) is $((root_1k / 1024 / 1024)) GB" | do_log
+        echo "Backup file ($FILENAME) has $((ROOT_MB_UNUSED_TIMES_10 / 10)).$((ROOT_MB_UNUSED_TIMES_10 % 10)) MB of unused space." | do_log
+        # echo "Required (with margin): $((RSYNC_TOTAL_1K_BLOCKS_NEEDED * 105 / 100 / 1024 / 1024)) GB" | do_log
+        echo "Required for this INCREMENTAL backup (with margin): $((BUFFERED_TIMES_10 / 10)).$((BUFFERED_TIMES_10 % 10)) MB" | do_log
+
         echo "To continue doing incremental backups a new image file needs to be generated or space added to the current backup." | do_log
 
         echo "" | do_log
