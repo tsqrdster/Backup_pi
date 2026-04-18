@@ -22,13 +22,13 @@ set -o pipefail
 # Check if run as sudo or re-start it if it was not
 if [[ $EUID -ne 0 ]]; then
     echo "Elevating privileges..."
-    exec sudo "$0" "$@"
+    exec sudo -E "$0" "$@"
 fi
 
 # Arrays to keep track of different mount types
 FSTAB_MOUNTS=()
-declare -a MANUAL_MOUNTS
-declare -a MANUAL_PATHS  # New array for clean paths
+MANUAL_MOUNTS=()
+MANUAL_PATHS=()  # New array for clean paths
 
 # The Flags: starts as "false"
 DRIVES_ARE_UNMOUNTED=false
@@ -93,7 +93,16 @@ do_log() {
     # Combine them here once to ensure the path is clean
     local LOG_PATH="${LOG_TO_FILE_DIRECTORY}/${LOG_TO_FILE_FILENAME}"
 
-    if [[ "$LOG_TO_FILE" == "1" ]]; then
+    # if [ "$LOG_TO_FILE" == "1" ] && [ -d "$(dirname "$LOG_PATH")" ]; then
+    # if [[ "$LOG_TO_FILE" == "1" ]] && [[ -n "$LOG_PATH" ]] && [[ ! -d "$LOG_PATH" ]] && [[ -d "$(dirname "$LOG_PATH")" ]]; then
+    # 1. Is logging enabled?
+    # 2. Is the path set?
+    # 3. Does it NOT end in a slash? (Meaning it's a file, not a folder)
+    # 4. Does the parent folder actually exist?
+    if [[ "$LOG_TO_FILE" == "1" ]] && \
+       [[ -n "$LOG_PATH" ]] && \
+       [[ "$LOG_PATH" != */ ]] && \
+       [[ -d "$(dirname "$LOG_PATH")" ]]; then
         tee -a "$LOG_PATH"
     else
         cat # Just passes the text through without saving to a file
@@ -109,22 +118,26 @@ directory_check() {
 
 # 1. FIND AND ANALYZE THE CUSTOM MOUNTS
 find_custom_mounts() {
-    echo "Checking for custom mounts..."
+    echo "Checking for custom mounts..." | do_log
     # Get the array of mounts not part of the OS (using excluded folders)
-    local targets
-    targets=$(findmnt --real -nlo TARGET | grep -vE "^/(boot|media|mnt|srv|opt|var|dev|proc|sys)?(/|$)")
+    local targets=()
+    # 1. Use mapfile -t to read line-by-line
+    # 2. Skip the -0 and -z flags
+    mapfile -t targets < <(findmnt --real -nlo TARGET | \
+        grep -vE "^/(boot|media|mnt|srv|opt|var|dev|proc|sys)?(/|$)")
+    # targets=$(findmnt --real -nlo TARGET | grep -vE "^/(boot|media|mnt|srv|opt|var|dev|proc|sys)?(/|$)")
 
     # local targets=$(findmnt --real -nlo TARGET | grep -vE "^/(boot|media|mnt|srv|opt|var|dev|proc|sys)?(/|$)")
 
-    if [ -z "$targets" ]; then
-
+    # if [ -z "$targets" ]; then
+    if [ "${#targets[@]}" -eq 0 ]; then
         echo "No custom mounts found." | do_log
         echo "" | do_log
         return
     fi
 
-    for mnt in $targets; do
-
+    # for mnt in $targets; do
+    for mnt in "${targets[@]}"; do
         # Check if the mount exists in fstab
         if findmnt --fstab --target "$mnt" >/dev/null 2>&1; then
             FSTAB_MOUNTS+=("$mnt")
@@ -480,9 +493,20 @@ startServices() {
 # Find latest .img file in currenly defined backup path
 find_incremental_file() {
     local LATEST_INCREMENTAL
-    LATEST_INCREMENTAL=$(bash -c "find ${BACKUP_PATH}/${HOSTNAME}-${OS_NAME}-${ARCHITECTURE}-*.img -type f | sort -n | cut -d ' ' -f 2- | tail -n 1")
+    # 1. First, check if the backup drive/path is even mounted
+    # Look for marker file existence - means backup destination is available
+    # if [ ! -f "$MARKER_FILE" ]; then
+        # echo "ERROR: Marker file $MARKER_FILE not found! The backup drive might be unmounted. Aborting to save SD card space." >&2 # | do_log
+        # # echo "" | do_log
+
+        # # # send error notifications
+    #     send_messages "❌ Backup FAILED for $HOSTNAME. BACKUP DRIVE NOT FOUND. Check Backup_pi.log"
+    #     send_log_messages
+    #     exit 1
+    # fi
+    LATEST_INCREMENTAL=$(bash -c "find ${BACKUP_PATH}/${HOSTNAME}-${OS_NAME}-${ARCHITECTURE}-*.img -type f 2>/dev/null | sort -n | cut -d ' ' -f 2- | tail -n 1")
     if [[ -z "$LATEST_INCREMENTAL" ]]; then
-        echo "Incremental backup selected but no existing image file found to update... Terminating." | do_log
+        echo "Incremental backup selected but no existing image file found to update... Terminating." >&2 | do_log
         exit 1
     fi
     LATEST_INCREMENTAL_FILENAME=$(basename "$LATEST_INCREMENTAL") #  or: filename="${src_file##*/}"  (faster)
@@ -493,7 +517,14 @@ check_space_for_backup() {
     # 1. Get used space in KB for / and /boot (the two main partitions)
     # --output=used provides just the column we need, tail -n +2 skips the header
     ROOT_USED=$(df -k / --output=used | tail -n 1)
-    BOOT_USED=$(df -k /boot/firmware --output=used | tail -n 1 2>/dev/null || df -k /boot --output=used | tail -n 1)
+    # BOOT_USED=$(df -k /boot/firmware --output=used | tail -n 1 2>/dev/null || df -k /boot --output=used | tail -n 1)
+    if [ -d "/boot/firmware" ]; then
+        BOOT_PATH="/boot/firmware"
+    else
+        BOOT_PATH="/boot"
+    fi
+
+    BOOT_USED=$(df -k "$BOOT_PATH" --output=used | tail -n 1)
 
     # 2. Add them together
     TOTAL_USED_KB=$((ROOT_USED + BOOT_USED))
@@ -664,6 +695,16 @@ if [[ "$FORCED_INITIAL" == "TRUE" ]]; then
     fi
 fi
 
+# 1. First, check if the backup drive/path is even mounted
+if [ ! -f "$MARKER_FILE" ]; then
+    echo "ERROR: Marker file $MARKER_FILE not found! The backup drive might be unmounted. Aborting to save SD card space." >&2
+    # Try to log it, but don't worry if it fails
+    echo "ERROR: The backup drive might be unmounted. Aborting..." | do_log 2>/dev/null
+    send_messages "❌ Backup FAILED for $HOSTNAME. BACKUP DRIVE NOT FOUND. Check Backup_pi.log"
+    # send_log_messages  # NO LOG CREATED YET
+    exit 1
+fi
+
 # BACKUP_MODE selection...
 if [[ ("$BACKUP_TYPE" == "user" || ("$BACKUP_MODE" == "USER" && "$COMPRESS_USER" != "TRUE")) && "$FORCED_INITIAL" != "TRUE" ]]; then
     BACKUP_MODE="USER"
@@ -680,7 +721,10 @@ elif [[ ("$BACKUP_TYPE" == "user compressed" || "$COMPRESS_USER" == "TRUE") && "
 
 elif [[ "$BACKUP_TYPE" == "image incremental" && "$FORCED_INITIAL" != "TRUE" ]]; then
     BACKUP_MODE="IMAGE INCREMENTAL"
-    FILENAME=$(find_incremental_file)
+    if ! FILENAME=$(find_incremental_file); then
+        # if [ $? -ne 0 ]; then
+        exit 1 # Now the main script actually stops
+    fi
     START_MSG="INCREMENTAL IMAGE Backup on $HOSTNAME to: $FILENAME at $(date)"
     LOG_TO_FILE_FILENAME="Backup_pi-${FILENAME}.log"
 
@@ -826,11 +870,11 @@ echo "" | do_log
 
 # Look for marker file existence - means backup destination is available
 if [ ! -f "$MARKER_FILE" ]; then
-    echo "ERROR: Marker file $MARKER_FILE not found! The USB drive might be unmounted. Aborting to save SD card space." | do_log
+    echo "ERROR: Marker file $MARKER_FILE not found! The backup drive might be unmounted. Aborting to save SD card space." | do_log
     echo "" | do_log
 
     # # send error notifications
-    send_messages "❌ Backup FAILED for $HOSTNAME. BACKUP USB DRIVE NOT FOUND. Check Backup_pi.log"
+    send_messages "❌ Backup FAILED for $HOSTNAME. BACKUP DRIVE NOT FOUND. Check Backup_pi.log"
     send_log_messages
     exit 1
 fi
@@ -1151,263 +1195,265 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
     # Run the backup - check if backing up SD card
     if [ -b "/dev/mmcblk0" ]; then
         echo "Backing up SD-Card to $FILENAME..." | do_log
-
-        # Detect if we are running in a terminal (manual) or background (cron)
-        if [ -t 1 ]; then
-            #  MANUAL: Show a progress bar with Rate, ETA, and Timer
-            # 2. Check if the noisy flag is in the array
-            IMAGE_BACKUP_LOG_PROGRESS=1
-            for opt in "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}"; do
-                case "$opt" in
-                *progress*)
-                    IMAGE_BACKUP_LOG_PROGRESS=0 # Found noisey flag - do not send the noise to the log
-                    ;;
-                *)
-                    # Ignore everything else to our new array
-                    ;;
-                esac
-            done
-
-            echo "Starting image-backup image creation..." | do_log
-            echo "" | do_log
-            echo "Starting image-backup with command : $IMAGE_BACKUP_BIN $IMAGE_BACKUP_OPTIONS -i $FULL_PATH,$IMAGE_BACKUP_INITIAL_IMAGE_SIZE,$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS $IMAGE_BACKUP_POST_IMAGE_NAME_OPTIONS" | do_log
-            echo "" | do_log
-            # Control what is logged so the progress stats do not fill the log
-            if [[ "$IMAGE_BACKUP_LOG_PROGRESS" == "1" ]]; then
-                # 1. Start the stopwatch
-                START_TIME=$SECONDS
-                "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
-                IMAGE_BACKUP_RESULT=$?
-            else # Logging and progress requested - skip logging output or the log file is huge
-                if [[ "$LOG_TO_FILE" == "1" ]]; then
-                    echo "Starting full backup (for incremental backups, run: $IMAGE_BACKUP_BIN $FULL_PATH)" >>"$FULL_LOG_PATH"
-                fi
-                # 1. Start the stopwatch
-                START_TIME=$SECONDS
-                "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS"
-                IMAGE_BACKUP_RESULT=$?
-            fi
-
-            # 3. Capture End Stats - Stop the stopwatch
-            END_TIME=$SECONDS
-            ELAPSED=$((END_TIME - START_TIME))
-
-            # 4. Calculate Average Speed
-            # We get the actual file size in bytes and divide by seconds
-            FILE_BYTES=$(stat -c%s "$FULL_PATH")
-            if [ "$ELAPSED" -gt 0 ]; then
-                # Math: (Bytes / 1024 / 1024) / Seconds = MB/s
-                AVG_SPEED=$(((FILE_BYTES / 1048576) / ELAPSED))
-            else
-                AVG_SPEED=0
-            fi
-
-            # 5. Format into Hours, Minutes and Seconds (01h:02m:03s)
-            # %02d ensures you get '05s' instead of '5s'
-            # If hours are 0, it still shows 00h
-            DURATION=$(printf '%02dh:%02dm:%02ds' $((ELAPSED / 3600)) $((ELAPSED % 3600 / 60)) $((ELAPSED % 60)))
-            echo "" | do_log
-            # 3. Use it in your log
-            echo "Transfer Performance: ${AVG_SPEED} MB/s average over ${DURATION}" | do_log
-
-        else # CRON job
-            # This creates a NEW array excluding the progress flag
-            IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY=()
-            i=0
-
-            while [[ $i -lt ${#IMAGE_BACKUP_OPTIONS_ARRAY[@]} ]]; do
-                opt="${IMAGE_BACKUP_OPTIONS_ARRAY[$i]}"
-
-                case "$opt" in
-                -o | --options)
-                    # 1. Grab the next element (the values)
-                    val="${IMAGE_BACKUP_OPTIONS_ARRAY[$((i + 1))]}"
-
-                    # 2. Scrub the values
-                    scrubbed_val=$(scrub_csv "$val")
-
-                    # 3. Only add the flag if something is left after scrubbing
-                    if [[ -n "$scrubbed_val" ]]; then
-                        IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY+=("$opt" "$scrubbed_val")
-                    fi
-
-                    # Move index forward by 2 (the flag and its value)
-                    ((i += 2))
-                    ;;
-
-                *progress*)
-                    # Skip standalone progress flags
-                    ((i++))
-                    ;;
-
-                *)
-                    # Keep everything else
-                    IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY+=("$opt")
-                    ((i++))
-                    ;;
-                esac
-            done
-
-            echo "Starting image-backup image creation..." | do_log
-
-            echo "Starting image-backup with command : $IMAGE_BACKUP_BIN ${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[*]} -i $FULL_PATH" | do_log
-            # 1. Start the stopwatch
-            START_TIME=$SECONDS
-            "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
-            # Capture the exit status into a variable immediately
-            IMAGE_BACKUP_RESULT=$?
-            # 3. Capture End Stats - Stop the Stopwatch
-            END_TIME=$SECONDS
-            ELAPSED=$((END_TIME - START_TIME))
-
-            # 4. Calculate Average Speed
-            # We get the actual file size in bytes and divide by seconds
-            FILE_BYTES=$(stat -c%s "$FULL_PATH")
-            if [ "$ELAPSED" -gt 0 ]; then
-                # Math: (Bytes / 1024 / 1024) / Seconds = MB/s
-                AVG_SPEED=$(((FILE_BYTES / 1048576) / ELAPSED))
-            else
-                AVG_SPEED=0
-            fi
-
-            # 2. Format into Minutes and Seconds (01h:02m:03s)
-            # %02d ensures you get '05s' instead of '5s'
-            # If hours are 0, it still shows 00h
-            DURATION=$(printf '%02dh:%02dm:%02ds' $((ELAPSED / 3600)) $((ELAPSED % 3600 / 60)) $((ELAPSED % 60)))
-            echo "---- END OF IMAGE-BACKUP RUN -----" | do_log
-            echo "Transfer Performance: ${AVG_SPEED} MB/s average over ${DURATION}" | do_log
-        fi
-    else # BACKUP USB DRIVE - ASSUME: SOURCE_DEV="/dev/sda"
-
+    else
         echo "Backing up USB to $FILENAME..." | do_log
+    fi
+    # Detect if we are running in a terminal (manual) or background (cron)
+    if [ -t 1 ]; then
+        #  MANUAL: Show a progress bar with Rate, ETA, and Timer
+        # 2. Check if the noisy flag is in the array
+        IMAGE_BACKUP_LOG_PROGRESS=1
+        for opt in "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}"; do
+            case "$opt" in
+            *progress*)
+                IMAGE_BACKUP_LOG_PROGRESS=0 # Found noisey flag - do not send the noise to the log
+                ;;
+            *)
+                # Ignore everything else
+                ;;
+            esac
+        done
 
-        # Detect if we are running in a terminal (manual) or background (cron)
-        if [ -t 1 ]; then
-
-            # 2. Check if the noisy flag is in the array
-            IMAGE_BACKUP_LOG_PROGRESS=1
-            for opt in "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}"; do
-                case "$opt" in
-                *progress*)
-                    IMAGE_BACKUP_LOG_PROGRESS=0 # Found noisey flag - do not send the noise to the log
-                    ;;
-                *)
-                    # Ignore everything else
-                    ;;
-                esac
-            done
-
-            echo "Starting image-backup image creation..." | do_log
-            echo "" | do_log
-            echo "Starting image-backup with command : $IMAGE_BACKUP_BIN $IMAGE_BACKUP_OPTIONS -i $FULL_PATH,$IMAGE_BACKUP_INITIAL_IMAGE_SIZE,$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS $IMAGE_BACKUP_POST_IMAGE_NAME_OPTIONS" | do_log
-            echo "" | do_log
-            # Control what is logged so the progress stats do not fill the log
-            if [[ "$IMAGE_BACKUP_LOG_PROGRESS" == "1" ]]; then
-                # 1. Start the stopwatch
-                START_TIME=$SECONDS
-                "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
-                IMAGE_BACKUP_RESULT=$?
-            else # Logging and progress requested - skip logging output or the log file is huge
-                if [[ "$LOG_TO_FILE" == "1" ]]; then
-                    echo "Starting full backup (for incremental backups, run: $IMAGE_BACKUP_BIN $FULL_PATH)" >>"$FULL_LOG_PATH"
-                fi
-                # 1. Start the stopwatch
-                START_TIME=$SECONDS
-                "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS"
-                IMAGE_BACKUP_RESULT=$?
-            fi
-
-            # 3. Capture End Stats - Stop the stopwatch
-            END_TIME=$SECONDS
-            ELAPSED=$((END_TIME - START_TIME))
-
-            # 4. Calculate Average Speed
-            # We get the actual file size in bytes and divide by seconds
-            FILE_BYTES=$(stat -c%s "$FULL_PATH")
-            if [ "$ELAPSED" -gt 0 ]; then
-                # Math: (Bytes / 1024 / 1024) / Seconds = MB/s
-                AVG_SPEED=$(((FILE_BYTES / 1048576) / ELAPSED))
-            else
-                AVG_SPEED=0
-            fi
-
-            # 5. Format into Hours, Minutes and Seconds (01h:02m:03s)
-            # %02d ensures you get '05s' instead of '5s'
-            # If hours are 0, it still shows 00h
-            DURATION=$(printf '%02dh:%02dm:%02ds' $((ELAPSED / 3600)) $((ELAPSED % 3600 / 60)) $((ELAPSED % 60)))
-            echo | do_log
-
-            echo "Transfer Performance: ${AVG_SPEED} MB/s average over ${DURATION}" | do_log
-
-        else # CRON:
-            # CRON USB backup
-            # This creates a NEW array excluding the progress flag
-            IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY=()
-            i=0
-
-            while [[ $i -lt ${#IMAGE_BACKUP_OPTIONS_ARRAY[@]} ]]; do
-                opt="${IMAGE_BACKUP_OPTIONS_ARRAY[$i]}"
-
-                case "$opt" in
-                -o | --options)
-                    # 1. Grab the next element (the values)
-                    val="${IMAGE_BACKUP_OPTIONS_ARRAY[$((i + 1))]}"
-
-                    # 2. Scrub the values
-                    scrubbed_val=$(scrub_csv "$val")
-
-                    # 3. Only add the flag if something is left after scrubbing
-                    if [[ -n "$scrubbed_val" ]]; then
-                        IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY+=("$opt" "$scrubbed_val")
-                    fi
-
-                    # Move index forward by 2 (the flag and its value)
-                    ((i += 2))
-                    ;;
-
-                *progress*)
-                    # Skip standalone progress flags
-                    ((i++))
-                    ;;
-
-                *)
-                    # Keep everything else
-                    IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY+=("$opt")
-                    ((i++))
-                    ;;
-                esac
-            done
-
-            echo "Starting image-backup image creation..." | do_log
-
-            echo "Starting image-backup with command : $IMAGE_BACKUP_BIN ${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[*]} -i $FULL_PATH" | do_log
+        echo "Starting image-backup image creation..." | do_log
+        echo "" | do_log
+        echo "Starting image-backup with command : $IMAGE_BACKUP_BIN $IMAGE_BACKUP_OPTIONS -i $FULL_PATH,$IMAGE_BACKUP_INITIAL_IMAGE_SIZE,$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS $IMAGE_BACKUP_POST_IMAGE_NAME_OPTIONS" | do_log
+        echo "" | do_log
+        # Control what is logged so the progress stats do not fill the log
+        if [[ "$IMAGE_BACKUP_LOG_PROGRESS" == "1" ]]; then
             # 1. Start the stopwatch
             START_TIME=$SECONDS
-            "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
-            # Capture the exit status into a variable immediately
+            "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
             IMAGE_BACKUP_RESULT=$?
-            # 3. Capture End Stats - Stop the Stopwatch
-            END_TIME=$SECONDS
-            ELAPSED=$((END_TIME - START_TIME))
-
-            # 4. Calculate Average Speed
-            # We get the actual file size in bytes and divide by seconds
-            FILE_BYTES=$(stat -c%s "$FULL_PATH")
-            if [ "$ELAPSED" -gt 0 ]; then
-                # Math: (Bytes / 1024 / 1024) / Seconds = MB/s
-                AVG_SPEED=$(((FILE_BYTES / 1048576) / ELAPSED))
-            else
-                AVG_SPEED=0
+        else # Logging and progress requested - skip logging output or the log file is huge
+            if [[ "$LOG_TO_FILE" == "1" ]]; then
+                echo "Starting full backup (for incremental backups, run: $IMAGE_BACKUP_BIN $FULL_PATH)" >>"$FULL_LOG_PATH"
             fi
-
-            # 2. Format into Minutes and Seconds (01h:02m:03s)
-            # %02d ensures you get '05s' instead of '5s'
-            # If hours are 0, it still shows 00h
-            DURATION=$(printf '%02dh:%02dm:%02ds' $((ELAPSED / 3600)) $((ELAPSED % 3600 / 60)) $((ELAPSED % 60)))
-            echo "---- END OF IMAGE-BACKUP RUN -----" | do_log
-            echo "Transfer Performance: ${AVG_SPEED} MB/s average over ${DURATION}" | do_log
+            # 1. Start the stopwatch
+            START_TIME=$SECONDS
+            "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS"
+            IMAGE_BACKUP_RESULT=$?
         fi
+
+        # 3. Capture End Stats - Stop the stopwatch
+        END_TIME=$SECONDS
+        ELAPSED=$((END_TIME - START_TIME))
+
+        # 4. Calculate Average Speed
+        # We get the actual file size in bytes and divide by seconds
+        FILE_BYTES=$(stat -c%s "$FULL_PATH")
+        if [ "$ELAPSED" -gt 0 ]; then
+            # Math: (Bytes / 1024 / 1024) / Seconds = MB/s
+            AVG_SPEED=$(((FILE_BYTES / 1048576) / ELAPSED))
+        else
+            AVG_SPEED=0
+        fi
+
+        # 5. Format into Hours, Minutes and Seconds (01h:02m:03s)
+        # %02d ensures you get '05s' instead of '5s'
+        # If hours are 0, it still shows 00h
+        DURATION=$(printf '%02dh:%02dm:%02ds' $((ELAPSED / 3600)) $((ELAPSED % 3600 / 60)) $((ELAPSED % 60)))
+        echo "" | do_log
+        # 3. Use it in your log
+        echo "Transfer Performance: ${AVG_SPEED} MB/s average over ${DURATION}" | do_log
+
+    else # CRON job
+        # This creates a NEW array excluding the progress flag
+        IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY=()
+        i=0
+
+        while [[ $i -lt ${#IMAGE_BACKUP_OPTIONS_ARRAY[@]} ]]; do
+            opt="${IMAGE_BACKUP_OPTIONS_ARRAY[$i]}"
+
+            case "$opt" in
+            -o | --options)
+                # 1. Grab the next element (the values)
+                val="${IMAGE_BACKUP_OPTIONS_ARRAY[$((i + 1))]}"
+
+                # 2. Scrub the values
+                scrubbed_val=$(scrub_csv "$val")
+
+                # 3. Only add the flag if something is left after scrubbing
+                if [[ -n "$scrubbed_val" ]]; then
+                    IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY+=("$opt" "$scrubbed_val")
+                fi
+
+                # Move index forward by 2 (the flag and its value)
+                ((i += 2))
+                ;;
+
+            *progress*)
+                # Skip standalone progress flags
+                ((i++))
+                ;;
+
+            *)
+                # Keep everything else
+                IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY+=("$opt")
+                ((i++))
+                ;;
+            esac
+        done
+
+        echo "Starting image-backup image creation..." | do_log
+
+        echo "Starting image-backup with command : $IMAGE_BACKUP_BIN ${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[*]} -i $FULL_PATH" | do_log
+        # 1. Start the stopwatch
+        START_TIME=$SECONDS
+        "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
+        # Capture the exit status into a variable immediately
+        IMAGE_BACKUP_RESULT=$?
+        # 3. Capture End Stats - Stop the Stopwatch
+        END_TIME=$SECONDS
+        ELAPSED=$((END_TIME - START_TIME))
+
+        # 4. Calculate Average Speed
+        # We get the actual file size in bytes and divide by seconds
+        FILE_BYTES=$(stat -c%s "$FULL_PATH")
+        if [ "$ELAPSED" -gt 0 ]; then
+            # Math: (Bytes / 1024 / 1024) / Seconds = MB/s
+            AVG_SPEED=$(((FILE_BYTES / 1048576) / ELAPSED))
+        else
+            AVG_SPEED=0
+        fi
+
+        # 2. Format into Minutes and Seconds (01h:02m:03s)
+        # %02d ensures you get '05s' instead of '5s'
+        # If hours are 0, it still shows 00h
+        DURATION=$(printf '%02dh:%02dm:%02ds' $((ELAPSED / 3600)) $((ELAPSED % 3600 / 60)) $((ELAPSED % 60)))
+        echo "---- END OF IMAGE-BACKUP RUN -----" | do_log
+        echo "Transfer Performance: ${AVG_SPEED} MB/s average over ${DURATION}" | do_log
     fi
+    # else # BACKUP USB DRIVE - ASSUME: SOURCE_DEV="/dev/sda"
+
+    #     echo "Backing up USB to $FILENAME..." | do_log
+
+    #     # Detect if we are running in a terminal (manual) or background (cron)
+    #     if [ -t 1 ]; then
+
+    #         # 2. Check if the noisy flag is in the array
+    #         IMAGE_BACKUP_LOG_PROGRESS=1
+    #         for opt in "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}"; do
+    #             case "$opt" in
+    #             *progress*)
+    #                 IMAGE_BACKUP_LOG_PROGRESS=0 # Found noisey flag - do not send the noise to the log
+    #                 ;;
+    #             *)
+    #                 # Ignore everything else
+    #                 ;;
+    #             esac
+    #         done
+
+    #         echo "Starting image-backup image creation..." | do_log
+    #         echo "" | do_log
+    #         echo "Starting image-backup with command : $IMAGE_BACKUP_BIN $IMAGE_BACKUP_OPTIONS -i $FULL_PATH,$IMAGE_BACKUP_INITIAL_IMAGE_SIZE,$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS $IMAGE_BACKUP_POST_IMAGE_NAME_OPTIONS" | do_log
+    #         echo "" | do_log
+    #         # Control what is logged so the progress stats do not fill the log
+    #         if [[ "$IMAGE_BACKUP_LOG_PROGRESS" == "1" ]]; then
+    #             # 1. Start the stopwatch
+    #             START_TIME=$SECONDS
+    #             "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
+    #             IMAGE_BACKUP_RESULT=$?
+    #         else # Logging and progress requested - skip logging output or the log file is huge
+    #             if [[ "$LOG_TO_FILE" == "1" ]]; then
+    #                 echo "Starting full backup (for incremental backups, run: $IMAGE_BACKUP_BIN $FULL_PATH)" >>"$FULL_LOG_PATH"
+    #             fi
+    #             # 1. Start the stopwatch
+    #             START_TIME=$SECONDS
+    #             "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS"
+    #             IMAGE_BACKUP_RESULT=$?
+    #         fi
+
+    #         # 3. Capture End Stats - Stop the stopwatch
+    #         END_TIME=$SECONDS
+    #         ELAPSED=$((END_TIME - START_TIME))
+
+    #         # 4. Calculate Average Speed
+    #         # We get the actual file size in bytes and divide by seconds
+    #         FILE_BYTES=$(stat -c%s "$FULL_PATH")
+    #         if [ "$ELAPSED" -gt 0 ]; then
+    #             # Math: (Bytes / 1024 / 1024) / Seconds = MB/s
+    #             AVG_SPEED=$(((FILE_BYTES / 1048576) / ELAPSED))
+    #         else
+    #             AVG_SPEED=0
+    #         fi
+
+    #         # 5. Format into Hours, Minutes and Seconds (01h:02m:03s)
+    #         # %02d ensures you get '05s' instead of '5s'
+    #         # If hours are 0, it still shows 00h
+    #         DURATION=$(printf '%02dh:%02dm:%02ds' $((ELAPSED / 3600)) $((ELAPSED % 3600 / 60)) $((ELAPSED % 60)))
+    #         echo | do_log
+
+    #         echo "Transfer Performance: ${AVG_SPEED} MB/s average over ${DURATION}" | do_log
+
+    #     else # CRON:
+    #         # CRON USB backup
+    #         # This creates a NEW array excluding the progress flag
+    #         IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY=()
+    #         i=0
+
+    #         while [[ $i -lt ${#IMAGE_BACKUP_OPTIONS_ARRAY[@]} ]]; do
+    #             opt="${IMAGE_BACKUP_OPTIONS_ARRAY[$i]}"
+
+    #             case "$opt" in
+    #             -o | --options)
+    #                 # 1. Grab the next element (the values)
+    #                 val="${IMAGE_BACKUP_OPTIONS_ARRAY[$((i + 1))]}"
+
+    #                 # 2. Scrub the values
+    #                 scrubbed_val=$(scrub_csv "$val")
+
+    #                 # 3. Only add the flag if something is left after scrubbing
+    #                 if [[ -n "$scrubbed_val" ]]; then
+    #                     IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY+=("$opt" "$scrubbed_val")
+    #                 fi
+
+    #                 # Move index forward by 2 (the flag and its value)
+    #                 ((i += 2))
+    #                 ;;
+
+    #             *progress*)
+    #                 # Skip standalone progress flags
+    #                 ((i++))
+    #                 ;;
+
+    #             *)
+    #                 # Keep everything else
+    #                 IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY+=("$opt")
+    #                 ((i++))
+    #                 ;;
+    #             esac
+    #         done
+
+    #         echo "Starting image-backup image creation..." | do_log
+
+    #         echo "Starting image-backup with command : $IMAGE_BACKUP_BIN ${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[*]} -i $FULL_PATH" | do_log
+    #         # 1. Start the stopwatch
+    #         START_TIME=$SECONDS
+    #         "$IMAGE_BACKUP_BIN" "${IMAGE_BACKUP_CLEAN_OPTIONS_ARRAY[@]}" -i "$FULL_PATH","$IMAGE_BACKUP_INITIAL_IMAGE_SIZE","$IMAGE_BACKUP_ADDITIONAL_IMAGE_SPACE_FOR_INCREMENTAL_BACKUPS" | do_log
+    #         # Capture the exit status into a variable immediately
+    #         IMAGE_BACKUP_RESULT=$?
+    #         # 3. Capture End Stats - Stop the Stopwatch
+    #         END_TIME=$SECONDS
+    #         ELAPSED=$((END_TIME - START_TIME))
+
+    #         # 4. Calculate Average Speed
+    #         # We get the actual file size in bytes and divide by seconds
+    #         FILE_BYTES=$(stat -c%s "$FULL_PATH")
+    #         if [ "$ELAPSED" -gt 0 ]; then
+    #             # Math: (Bytes / 1024 / 1024) / Seconds = MB/s
+    #             AVG_SPEED=$(((FILE_BYTES / 1048576) / ELAPSED))
+    #         else
+    #             AVG_SPEED=0
+    #         fi
+
+    #         # 2. Format into Minutes and Seconds (01h:02m:03s)
+    #         # %02d ensures you get '05s' instead of '5s'
+    #         # If hours are 0, it still shows 00h
+    #         DURATION=$(printf '%02dh:%02dm:%02ds' $((ELAPSED / 3600)) $((ELAPSED % 3600 / 60)) $((ELAPSED % 60)))
+    #         echo "---- END OF IMAGE-BACKUP RUN -----" | do_log
+    #         echo "Transfer Performance: ${AVG_SPEED} MB/s average over ${DURATION}" | do_log
+    #     fi
+    # fi
 
     # TEST IF BACKUP SUCCESSFUL
     if [ "${IMAGE_BACKUP_RESULT:-0}" -ne 0 ]; then # Not equal to 0 -> Error during image-backup
@@ -1437,12 +1483,12 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
         send_log_messages
         exit 1
     else
-        if [ "${IMAGE_BACKUP_RESULT}" -eq 0 ]; then # Successful image-backup
+        # if [ "${IMAGE_BACKUP_RESULT}" -eq 0 ]; then # Successful image-backup
             echo | do_log
             echo "Image creation using image-backup finished. Results from image-info:" | do_log
             # use image-info to display .img file info
             "$IMAGE_INFO_BIN" "$FULL_PATH" | do_log
-        fi
+        # fi
 
         echo "" | do_log
         if [[ "$STOP_CONTAINERS" == "1" || "$STOP_SERVICES" == "1" ]]; then
@@ -1485,7 +1531,9 @@ elif [[ "$BACKUP_MODE" == "IMAGE" ]]; then
                 echo "Generating checksum for verification..." | do_log
                 echo "Read-back verification starting..." | do_log
                 # Read file to confirm success by creating a sha256 hash of the file
-                ACTUAL_HASH=$(pv "$FULL_PATH" | sha256sum | awk '{print $1}')
+                # Limit read speed to 2 Megabytes per second for a slow Raspberry Pi and slow network connection
+                # -c 3: Sets the "Idle" class, meaning the hash will only use I/O when nothing else needs it.
+                ACTUAL_HASH=$(ionice -c 3 pv -L 2m "$FULL_PATH" | sha256sum | awk '{print $1}')
                 # If hash was generated - then .img file was verified
                 if [[ -n "$ACTUAL_HASH" ]]; then
                     echo "SUCCESS: Verification passed. (Hash: $ACTUAL_HASH)" | do_log
@@ -1907,12 +1955,12 @@ elif [[ "$BACKUP_MODE" == "IMAGE INCREMENTAL" ]]; then
         send_log_messages
         exit 1
     else
-        if [ "${IMAGE_BACKUP_RESULT}" -eq 0 ]; then
+        # if [ "${IMAGE_BACKUP_RESULT}" -eq 0 ]; then
             echo "" | do_log
             echo "Image creation using image-backup finished. Results from image-info:" | do_log
             # Display new image-info results
             "$IMAGE_INFO_BIN" "$FULL_PATH" | do_log
-        fi
+        # fi
 
         echo "" | do_log
         if [[ "$STOP_CONTAINERS" == "1" || "$STOP_SERVICES" == "1" ]]; then
